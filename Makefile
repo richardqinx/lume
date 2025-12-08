@@ -1,61 +1,45 @@
-TOOLCHAIN := riscv64-linux-gnu
-CC        := $(TOOLCHAIN)-gcc
-CXX       := $(TOOLCHAIN)-g++
-LD        := $(TOOLCHAIN)-ld
-OBJCOPY   := $(TOOLCHAIN)-objcopy
+TOOLCHAIN_PREFIX := riscv64-linux-gnu-
+CC      := $(TOOLCHAIN_PREFIX)gcc
+CXX     := $(TOOLCHAIN_PREFIX)g++
+LD      := $(TOOLCHAIN_PREFIX)ld
+OBJCOPY := $(TOOLCHAIN_PREFIX)objcopy
 
-TARGET_ELF := build/kernel.elf
-TARGET_BIN := build/kernel.bin
+BUILD_DIR := build
+SRC_DIR   := src
 
-ARCH_FLAGS := -march=rv64gc -mabi=lp64 -mcmodel=medany
-CFLAGS     := -Wall -Wextra -O2 -ffreestanding -nostdlib -Iinclude $(ARCH_FLAGS)
-CXXFLAGS   := $(CFLAGS) -fno-exceptions -fno-rtti -fno-use-cxa-atexit
+CFLAGS   := -Wall -Wextra -O2 -ffreestanding -nostdlib -mcmodel=medany -Iinclude
+CXXFLAGS := $(CFLAGS) -fno-exceptions -fno-rtti -fno-use-cxa-atexit
 
-SRC_DIRS  := src
-SRCS_ASM  := $(shell find $(SRC_DIRS) -name "*.S")
-SRCS_CXX  := $(shell find $(SRC_DIRS) -name "*.cc")
+LINKER_SCRIPT := link.ld
 
-OBJS      := $(SRCS_ASM:%.S=build/%.o) $(SRCS_CXX:%.cc=build/%.o)
+SRCS_S   := $(shell find $(SRC_DIR) -name "*.S")
+SRCS_CXX := $(shell find $(SRC_DIR) -name "*.cc")
+OBJS     := $(SRCS_S:%.S=$(BUILD_DIR)/%.o) $(SRCS_CXX:%.cc=$(BUILD_DIR)/%.o)
 
-DEPS      := $(OBJS:.o=.d)
+TARGET   := $(BUILD_DIR)/kernel.elf
 
+.PHONY: all clean run
 
-LINKER_SCRIPT := linker.ld
+all: $(TARGET)
 
-QEMU      := qemu-system-riscv64
-QEMU_FLAGS := -machine virt -m 128M -nographic -bios none -kernel $(TARGET_ELF)
-
-
-.PHONY: all clean run debug directories
-
-all: directories $(TARGET_ELF)
-
-$(TARGET_ELF): $(OBJS) $(LINKER_SCRIPT)
-	@echo "Linking $@"
+$(TARGET): $(OBJS) $(LINKER_SCRIPT)
+	@echo "  LD      $@"
 	@$(LD) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
 
-build/%.o: %.S
+$(BUILD_DIR)/%.o: %.S
 	@mkdir -p $(dir $@)
-	@echo "Compiling ASM $<"
-	@$(CC) $(CFLAGS) -MMD -c $< -o $@
+	@echo "  AS      $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
 
-build/%.o: %.cc
+$(BUILD_DIR)/%.o: %.cc
 	@mkdir -p $(dir $@)
-	@echo "Compiling C++ $<"
-	@$(CXX) $(CXXFLAGS) -MMD -c $< -o $@
+	@echo "  CXX     $<"
+	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
-directories:
-	@mkdir -p build
-
-run: all
-	@echo "Starting QEMU..."
-	$(QEMU) $(QEMU_FLAGS)
-
-debug: all
-	@echo "Starting QEMU in debug mode (connect with gdb-multiarch)..."
-	$(QEMU) $(QEMU_FLAGS) -S -s
+run: $(TARGET)
+	@echo "  QEMU    Running..."
+	@qemu-system-riscv64 -machine virt -nographic -bios none \
+		-kernel $(TARGET) -m 128M
 
 clean:
-	@rm -rf build
-
--include $(DEPS)
+	rm -rf $(BUILD_DIR)

@@ -1,28 +1,40 @@
 .section .text.entry
-.globl _start
+.global _start
 
 _start:
     csrr t0, mhartid
-    bnez t0, .L_park_harts
+    bnez t0, .L_park
 
-    la sp, _stack_top
+    li t0, 0x1fffffffffffff
+    csrw pmpaddr0, t0
+    li t0, 0xf
+    csrw pmpcfg0, t0
 
-    la a0, _bss_start
-    la a1, _bss_end
-    bge a0, a1, .L_call_main
+    li t0, 0
+    li t1, (1 << 11) | (1 << 7)
+    csrw mstatus, t1
 
-.L_clear_bss:
-    sd zero, (a0)
-    addi a0, a0, 8
-    blt a0, a1, .L_clear_bss
+    csrw satp, zero
 
-.L_call_main:
-    call kernel_main
+    li t0, 0xffff
+    csrw medeleg, t0
+    csrw mideleg, t0
+    
+    la t0, kernel_main
+    csrw mepc, t0
 
-.L_infinite_loop:
+    la sp, stack_top
+
+    mret
+
+.L_park:
     wfi
-    j .L_infinite_loop
+    j .L_park
 
-.L_park_harts:
-    wfi
-    j .L_park_harts
+
+.section .bss
+.align 4
+.global stack_top
+stack_base:
+    .space 4096 * 4
+stack_top:

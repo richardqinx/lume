@@ -54,4 +54,19 @@ namespace Drivers{
             uart_putc(*s++);
         }
     }
+
+    void print_hex(uint64_t val)
+    {
+        char buf[20];
+        const char *digits = "0123456789ABCDEF";
+        buf[0] = '0';
+        buf[1] = 'x';
+        for (int i = 0; i < 16; i++)
+        {
+            buf[17 - i] = digits[val & 0xF];
+            val >>= 4;
+        }
+        buf[18] = 0;
+        Drivers::uart_puts(buf);
+    }
 }

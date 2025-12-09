@@ -12,3 +12,5 @@ typedef signed long long   int64_t;
 
 typedef uint64_t           size_t;
 typedef uint64_t           uintptr_t;
+
+typedef uint64_t           uint64;

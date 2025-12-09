@@ -1,20 +1,21 @@
 #include "drivers/uart.h"
 #include "kernel/pmm.h"
 #include "kernel/mm.h"
+#include "kernel/trap.h"
 
-void print_hex(uint64_t val)
-{
-    char buf[17];
-    buf[16] = 0;
-    const char *digits = "0123456789ABCDEF";
-    for (int i = 15; i >= 0; i--)
-    {
-        buf[i] = digits[val & 0xf];
-        val >>= 4;
-    }
-    Drivers::uart_puts("0x");
-    Drivers::uart_puts(buf);
-}
+// void print_hex(uint64_t val)
+// {
+//     char buf[17];
+//     buf[16] = 0;
+//     const char *digits = "0123456789ABCDEF";
+//     for (int i = 15; i >= 0; i--)
+//     {
+//         buf[i] = digits[val & 0xf];
+//         val >>= 4;
+//     }
+//     Drivers::uart_puts("0x");
+//     Drivers::uart_puts(buf);
+// }
 
 extern "C" void kernel_main()
 {
@@ -33,11 +34,11 @@ extern "C" void kernel_main()
     void *p2 = PMM::alloc_page();
 
     Drivers::uart_puts("Allocated Page 1: ");
-    print_hex((uint64_t)p1);
+    Drivers::print_hex((uint64_t)p1);
     Drivers::uart_puts("\n");
 
     Drivers::uart_puts("Allocated Page 2: ");
-    print_hex((uint64_t)p2);
+    Drivers::print_hex((uint64_t)p2);
     Drivers::uart_puts("\n");
 
     Drivers::uart_puts("[Kernel] Freeing Page 1...\n");
@@ -45,7 +46,7 @@ extern "C" void kernel_main()
 
     void *p3 = PMM::alloc_page();
     Drivers::uart_puts("Allocated Page 3: ");
-    print_hex((uint64_t)p3);
+    Drivers::print_hex((uint64_t)p3);
     Drivers::uart_puts("\n");
 
     if (p3 == p1)
@@ -62,6 +63,19 @@ extern "C" void kernel_main()
 
     VM::kvminithart();
     Drivers::uart_puts("[Boot] MMU ENABLED! We are now using virtual addresses.\n");
+
+    Trap::init();
+    Drivers::uart_puts("[Boot] Trap Handler Installed.\n");
+
+    Drivers::uart_puts("\n[Test] Triggering Page Fault by reading 0x0...\n");
+    volatile int *p = (int *)0x0;
+    int crash = *p;
+    (void)crash;
+
+    Drivers::uart_puts("[Test Failed] Shuold not reach here.\n");
+
+    Drivers::uart_puts("\n[Test] Triggering Store Fault on Text Segment...\n");
+    *(int*)0x80000000 = 1234;
 
     while (1)
     {

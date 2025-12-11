@@ -1,6 +1,9 @@
 #include "kernel/trap.h"
 #include "common/types.h"
 #include "drivers/uart.h"
+#include "kernel/proc.h"
+#include "kernel/timer.h"
+
 
 void panic(const char *s)
 {
@@ -48,7 +51,8 @@ namespace Trap
 
             case 5:
                 Drivers::uart_puts("[IRQ] Timer Interrupt\n");
-
+                Timer::set_next_trigger();
+                ProcManager::yield();
                 break;
             
             case 9:

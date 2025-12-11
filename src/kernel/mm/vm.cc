@@ -78,6 +78,8 @@ namespace VM
 
         mappages(kernel_pagetable, 0x10000000, 0x10000, 0x10000000, PTE_R | PTE_W);
 
+        mappages(kernel_pagetable, 0x2000000, 0x10000, 0x2000000, PTE_R | PTE_W);
+
         mappages(kernel_pagetable, (uint64)text_start, (uint64)text_end - (uint64)text_start,
                  (uint64)text_start, PTE_R | PTE_X);
 

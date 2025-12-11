@@ -2,20 +2,37 @@
 #include "kernel/pmm.h"
 #include "kernel/mm.h"
 #include "kernel/trap.h"
+#include "kernel/proc.h"
+#include "kernel/timer.h"
 
-// void print_hex(uint64_t val)
-// {
-//     char buf[17];
-//     buf[16] = 0;
-//     const char *digits = "0123456789ABCDEF";
-//     for (int i = 15; i >= 0; i--)
-//     {
-//         buf[i] = digits[val & 0xf];
-//         val >>= 4;
-//     }
-//     Drivers::uart_puts("0x");
-//     Drivers::uart_puts(buf);
-// }
+void delay()
+{
+    for(volatile int i = 0; i < 1000000; i++)
+    {
+
+    }
+}
+
+void task_a()
+{
+    while(1)
+    {
+        Drivers::uart_putc('A');
+        delay();
+        ProcManager::yield();
+    }
+}
+
+void task_b()
+{
+    while (1)
+    {
+        Drivers::uart_putc('B');
+        delay();
+        ProcManager::yield();
+    }
+    
+}
 
 extern "C" void kernel_main()
 {
@@ -24,39 +41,10 @@ extern "C" void kernel_main()
     Drivers::uart_puts("\n[Modern DOS Kernel] Booted in S-Mode.\n");
     Drivers::uart_puts("2025 Richard Qin\n");
     Drivers::uart_puts("\n");
+    Drivers::uart_puts("\n[Boot] Kernel started.\n");
 
-    Drivers::uart_puts("[Kernel] Initializing PMM...\n");
     PMM::init();
-    Drivers::uart_puts("[Kernel] PMM initialized.\n");
-
-    Drivers::uart_puts("[Kernel] Testing alloc_page...\n");
-    void *p1 = PMM::alloc_page();
-    void *p2 = PMM::alloc_page();
-
-    Drivers::uart_puts("Allocated Page 1: ");
-    Drivers::print_hex((uint64_t)p1);
-    Drivers::uart_puts("\n");
-
-    Drivers::uart_puts("Allocated Page 2: ");
-    Drivers::print_hex((uint64_t)p2);
-    Drivers::uart_puts("\n");
-
-    Drivers::uart_puts("[Kernel] Freeing Page 1...\n");
-    PMM::free_page(p1);
-
-    void *p3 = PMM::alloc_page();
-    Drivers::uart_puts("Allocated Page 3: ");
-    Drivers::print_hex((uint64_t)p3);
-    Drivers::uart_puts("\n");
-
-    if (p3 == p1)
-    {
-        Drivers::uart_puts("[Test Passed] Reuse freed memory successfully.\n");
-    }
-    else
-    {
-        Drivers::uart_puts("[Test Failed] Memory leak or logic error.\n");
-    }
+    Drivers::uart_puts("[Boot] PMM initialized.\n");
 
     VM::kvminit();
     Drivers::uart_puts("[Boot] Kernel page table created.\n");
@@ -67,15 +55,26 @@ extern "C" void kernel_main()
     Trap::init();
     Drivers::uart_puts("[Boot] Trap Handler Installed.\n");
 
-    Drivers::uart_puts("\n[Test] Triggering Page Fault by reading 0x0...\n");
-    volatile int *p = (int *)0x0;
-    int crash = *p;
-    (void)crash;
+    Timer::init();
+    Drivers::uart_puts("[Boot] Timer Interrupt Enabled.\n");
 
-    Drivers::uart_puts("[Test Failed] Shuold not reach here.\n");
+    // Drivers::uart_puts("\n[Test] Triggering Page Fault by reading 0x0...\n");
+    // volatile int *p = (int *)0x0;
+    // int crash = *p;
+    // (void)crash;
 
-    Drivers::uart_puts("\n[Test] Triggering Store Fault on Text Segment...\n");
-    *(int*)0x80000000 = 1234;
+    // Drivers::uart_puts("[Test Failed] Shuold not reach here.\n");
+
+    // Drivers::uart_puts("\n[Test] Triggering Store Fault on Text Segment...\n");
+    // *(int*)0x80000000 = 1234;
+
+    ProcManager::init();
+    Drivers::uart_puts("[Boot] Process Manager initialized.\n");
+
+    ProcManager::create_kernel_thread(task_a, "Task A");
+    ProcManager::create_kernel_thread(task_b, "Task B");
+
+    ProcManager::scheduler();
 
     while (1)
     {

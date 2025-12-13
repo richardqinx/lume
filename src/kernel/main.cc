@@ -42,7 +42,7 @@ extern "C" void kernel_main()
 
     fdt_init(g_dtb_addr);
     Drivers::uart_init();
-    Drivers::uart_puts("\n[Modern DOS Kernel] Booted in S-Mode.\n");
+    Drivers::uart_puts("\n[Lume OS Kernel] Booted in S-Mode.\n");
     Drivers::uart_puts("2025 Richard Qin\n");
     Drivers::uart_puts("\n");
     Drivers::uart_puts("\n[Boot] Kernel started.\n");

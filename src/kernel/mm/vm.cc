@@ -2,6 +2,7 @@
 #include "kernel/pmm.h"
 #include "drivers/uart.h"
 #include "common/types.h"
+#include "kernel/config.h"
 
 extern "C" char text_start[];
 extern "C" char text_end[];
@@ -76,9 +77,20 @@ namespace VM
     {
         kernel_pagetable = (pagetable_t)PMM::alloc_page();
 
-        mappages(kernel_pagetable, 0x10000000, 0x10000, 0x10000000, PTE_R | PTE_W);
+        if (g_uart_base != 0)
+        {
+            mappages(kernel_pagetable, g_uart_base, PGSIZE, g_uart_base, PTE_R | PTE_W);
+        }
 
-        mappages(kernel_pagetable, 0x2000000, 0x10000, 0x2000000, PTE_R | PTE_W);
+        // if (g_clint_base != 0)
+        // {
+        //     mappages(kernel_pagetable, g_clint_base, 0x10000, g_clint_base, PTE_R | PTE_W);
+        // }
+
+        if (g_plic_base != 0)
+        {
+            mappages(kernel_pagetable, g_plic_base, 0x400000, g_plic_base, PTE_R | PTE_W);
+        }
 
         mappages(kernel_pagetable, (uint64)text_start, (uint64)text_end - (uint64)text_start,
                  (uint64)text_start, PTE_R | PTE_X);

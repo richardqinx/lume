@@ -1,7 +1,8 @@
 #include "drivers/uart.h"
 #include "common/types.h"
+#include "kernel/config.h"
 
-#define UART0_BASE          0x10000000L
+// #define UART0_BASE          0x10000000L
 
 #define UART_RBR            0x00 // Receiver Buffer Register (Read)
 #define UART_THR            0x00 // Transmitter Holding Register (Write)
@@ -16,11 +17,15 @@
 namespace Drivers{
     inline volatile uint8_t &reg(uint32_t offset)
     {
-        return *reinterpret_cast<volatile uint8_t *>(UART0_BASE + offset);
+        return *reinterpret_cast<volatile uint8_t *>(g_uart_base + offset);
     }
 
     void uart_init()
     {
+        
+        if (g_uart_base == 0)
+            return;
+
         reg(UART_IER) = 0x00;
 
         reg(UART_LCR) = 0x80;

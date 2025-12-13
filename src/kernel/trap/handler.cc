@@ -45,8 +45,7 @@ namespace Trap
             switch (cause_code)
             {
             case 1:
-                Drivers::uart_puts("[IRQ] Software Interrupt\n");
-                asm volatile("csrc sip, %0" : : "r"(1 << 1));
+                Drivers::uart_puts("[IRQ] Software Interrupt (Unexpected)\n");
                 break;
 
             case 5:

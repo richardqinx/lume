@@ -4,6 +4,9 @@
 #include "kernel/trap.h"
 #include "kernel/proc.h"
 #include "kernel/timer.h"
+#include "kernel/config.h"
+
+void fdt_init(uint64 dtb);
 
 void delay()
 {
@@ -19,7 +22,7 @@ void task_a()
     {
         Drivers::uart_putc('A');
         delay();
-        ProcManager::yield();
+        // ProcManager::yield();
     }
 }
 
@@ -29,7 +32,7 @@ void task_b()
     {
         Drivers::uart_putc('B');
         delay();
-        ProcManager::yield();
+        // ProcManager::yield();
     }
     
 }
@@ -37,6 +40,7 @@ void task_b()
 extern "C" void kernel_main()
 {
 
+    fdt_init(g_dtb_addr);
     Drivers::uart_init();
     Drivers::uart_puts("\n[Modern DOS Kernel] Booted in S-Mode.\n");
     Drivers::uart_puts("2025 Richard Qin\n");
@@ -58,26 +62,14 @@ extern "C" void kernel_main()
     Timer::init();
     Drivers::uart_puts("[Boot] Timer Interrupt Enabled.\n");
 
-    // Drivers::uart_puts("\n[Test] Triggering Page Fault by reading 0x0...\n");
-    // volatile int *p = (int *)0x0;
-    // int crash = *p;
-    // (void)crash;
-
-    // Drivers::uart_puts("[Test Failed] Shuold not reach here.\n");
-
-    // Drivers::uart_puts("\n[Test] Triggering Store Fault on Text Segment...\n");
-    // *(int*)0x80000000 = 1234;
-
     ProcManager::init();
-    Drivers::uart_puts("[Boot] Process Manager initialized.\n");
+    Drivers::uart_puts("[Boot] ProcManager Initialized.\n");
 
+    void task_a();
+    void task_b();
     ProcManager::create_kernel_thread(task_a, "Task A");
     ProcManager::create_kernel_thread(task_b, "Task B");
 
+    Drivers::uart_puts("[Kernel] Scheduler Starting...\n");
     ProcManager::scheduler();
-
-    while (1)
-    {
-
-    }
 }

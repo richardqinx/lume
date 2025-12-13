@@ -1,25 +1,31 @@
 #include "common/types.h"
-#include "kernel/timer.h"
+#include "kernel/config.h"
 
-#define CLINT_BASE 0x2000000L
-#define CLINT_MTIMECMP(hartid) (CLINT_BASE + 0x4000 + 8 * (hartid))
-#define CLINT_MTIME (CLINT_BASE + 0xBFF8)
+namespace SBI
+{
+    void set_timer(uint64 stime_value);
+}
 
 #define INTERVAL 1000000
 
-namespace Timer{
-    uint64 get_time(){
-        return *(volatile uint64*)CLINT_MTIME;
+namespace Timer
+{
+    uint64 get_time()
+    {
+        uint64 time;
+        asm volatile("rdtime %0" : "=r"(time));
+        return time;
     }
 
-    void set_next_trigger(){
-        uint64 mtime = get_time();
-
-        *(volatile uint64 *)CLINT_MTIMECMP(0) = mtime + INTERVAL;
+    void set_next_trigger()
+    {
+        SBI::set_timer(get_time() + INTERVAL);
     }
 
-    void init(){
+    void init()
+    {
         set_next_trigger();
+
         uint64 sie;
         asm volatile("csrr %0, sie" : "=r"(sie));
         sie |= (1L << 5);

@@ -38,7 +38,7 @@ $(BUILD_DIR)/%.o: %.cc
 
 run: $(TARGET)
 	@echo "  QEMU    Running..."
-	@qemu-system-riscv64 -machine virt -nographic -bios none \
+	@qemu-system-riscv64 -machine virt -nographic \
 		-kernel $(TARGET) -m 128M
 
 clean:

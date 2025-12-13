@@ -14,3 +14,5 @@ typedef uint64_t           size_t;
 typedef uint64_t           uintptr_t;
 
 typedef uint64_t           uint64;
+typedef uint32_t           uint32;
+typedef uint8_t            uint8;

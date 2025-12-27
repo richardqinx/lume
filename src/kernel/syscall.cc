@@ -4,6 +4,7 @@
 #include "kernel/riscv.h"
 #include "drivers/uart.h"
 #include "kernel/timer.h"
+#include "kernel/mm.h"
 
 extern int fork();
 
@@ -75,21 +76,38 @@ uint64 sys_putc()
 
 uint64 sys_write()
 {
-    // 简单模拟
     int fd;
     uint64 p;
     int n;
 
-    if (argint(0, &fd) < 0 || argint(2, &n) < 0)
+    if (argint(0, &fd) < 0 || argint(2, &n) < 0 || argraw(1) == 0)
         return -1;
-    p = argraw(1); // buffer address
+    p = argraw(1);
 
     if (fd == 1)
     {
         struct Proc *proc = myproc();
-        // 这里应该有 vm copyin 检查，暂时直接访问物理内存
-        (void)p; // 消除 unused variable 警告
+        const int max = 128;
+        char buf[max];
+        int i = 0;
 
+        while (i < n)
+        {
+            int len = n - i;
+            if (len > max)
+                len = max;
+
+            if (VM::copyin(proc->pagetable, buf, p + i, len) < 0)
+            {
+                return -1;
+            }
+
+            for (int j = 0; j < len; j++)
+            {
+                Drivers::uart_putc(buf[j]);
+            }
+            i += len;
+        }
         return n;
     }
     return -1;

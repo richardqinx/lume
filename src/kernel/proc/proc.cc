@@ -23,13 +23,8 @@ struct spinlock proc_lock;
 
 int nextpid = 1;
 
-
-uchar initcode[] = {
-    0x13, 0x05, 0x50, 0x05, // li a0, 85 ('U')
-    0x93, 0x08, 0x10, 0x00, // li a7, 1  (SYS_putc)
-    0x73, 0x00, 0x00, 0x00, // ecall
-    0x6f, 0xf0, 0x5f, 0xff  // j loop (-12)
-};
+extern char initcode_start[];
+extern char initcode_end[];
 
 struct Proc *myproc()
 {
@@ -277,7 +272,9 @@ namespace ProcManager
         }
 
         p->pagetable = VM::uvmcreate();
-        VM::uvminit(p->pagetable, initcode, sizeof(initcode));
+        
+        uint64 initcode_sz = initcode_end - initcode_start;
+        VM::uvminit(p->pagetable, (uchar *)initcode_start, initcode_sz);
         p->sz = PGSIZE;
 
         if (VM::mappages(p->pagetable, TRAPFRAME, PGSIZE,
@@ -402,6 +399,6 @@ namespace ProcManager
         }
     }
 
-    
+
 
 }

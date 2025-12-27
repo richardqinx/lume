@@ -23,4 +23,6 @@
 #define SYS_mkdir   21
 #define SYS_close   22
 
+#ifndef __ASSEMBLER__
 void syscall();
+#endif

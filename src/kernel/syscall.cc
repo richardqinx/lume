@@ -99,6 +99,7 @@ uint64 sys_write()
 
             if (VM::copyin(proc->pagetable, buf, p + i, len) < 0)
             {
+                Drivers::uart_puts("sys_write: copyin failed\n");
                 return -1;
             }
 

@@ -144,16 +144,21 @@ int fork()
     }
 
     np->pagetable = VM::uvmcreate();
+
     if (VM::uvmcopy(p->pagetable, np->pagetable, p->sz) < 0)
     {
-        PMM::free_page(np->kstack);
-        PMM::free_page(np->tf);
-        Spinlock::acquire(&proc_lock);
-        np->state = UNUSED;
+        freeproc(np);
         Spinlock::release(&proc_lock);
         return -1;
     }
     np->sz = p->sz;
+
+    if (VM::mappages(np->pagetable, TRAPFRAME, PGSIZE,
+                     (uint64)np->tf, PTE_R | PTE_W) < 0)
+    {
+        freeproc(np);
+        return -1;
+    }
 
     *(np->tf) = *(p->tf);
 
@@ -272,7 +277,7 @@ namespace ProcManager
         }
 
         p->pagetable = VM::uvmcreate();
-        
+
         uint64 initcode_sz = initcode_end - initcode_start;
         VM::uvminit(p->pagetable, (uchar *)initcode_start, initcode_sz);
         p->sz = PGSIZE;

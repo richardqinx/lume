@@ -4,6 +4,7 @@
 #include "kernel/proc.h"
 #include "kernel/timer.h"
 
+extern void usertrapret();
 
 void panic(const char *s)
 {
@@ -123,4 +124,53 @@ namespace Trap
             }
         }
     }
+}
+
+extern "C" void usertrap()
+{
+    asm volatile("csrw stvec, %0" : : "r"(Trap::kernelvec));
+
+    uint64 scause;
+    asm volatile("csrr %0, scause" : "=r"(scause));
+
+    struct Proc *p = myproc();
+    
+    extern struct Proc procs[];
+    for(int i = 0; i < 10; ++i)
+        if(procs[i].state == RUNNING)
+            p = &procs[i];
+
+    uint64 sepc;
+    asm volatile("csrr %0, sepc" : "=r"(sepc));
+    p->tf->epc = sepc;
+
+    if(scause == 8)
+    {
+        p->tf->epc += 4;
+
+        uint64 syscall_num = p->tf->a7;
+
+        if (syscall_num == 1)
+        {
+            char c = (char)p->tf->a0;
+            Drivers::uart_putc(c);
+        }
+        else
+        {
+            Drivers::uart_puts("Unknown Syscall\n");
+        }
+    }
+    else if ((scause & (1L << 63)) && (scause & 0xF) == 5)
+    {
+        Timer::set_next_trigger();
+        ProcManager::yield();
+    }
+    else
+    {
+        Drivers::uart_puts("Unexpected User Trap!\n");
+        while (1)
+            ;
+    }
+
+    forkret();
 }

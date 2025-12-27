@@ -1,4 +1,3 @@
-# src/boot/entry.S
 .section .text.entry
 .global _start
 

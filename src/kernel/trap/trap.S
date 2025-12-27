@@ -1,10 +1,11 @@
 .section .text
 .global kernelvec
-.align 4
+.global uservec
+.global userret
+.align 12
 
 kernelvec:
-    
-    addi sp, sp, -256
+    addi sp, sp, -288
     
     sd ra, 40(sp)
     sd sp, 48(sp)
@@ -82,6 +83,5 @@ kernelvec:
     ld t5, 272(sp)
     ld t6, 280(sp)
     
-    addi sp, sp, 256
-    
+    addi sp, sp, 288
     sret

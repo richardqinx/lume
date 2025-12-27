@@ -16,3 +16,7 @@ typedef uint64_t           uintptr_t;
 typedef uint64_t           uint64;
 typedef uint32_t           uint32;
 typedef uint8_t            uint8;
+
+typedef unsigned int        uint;
+typedef unsigned short      ushort;
+typedef unsigned char       uchar;

@@ -67,9 +67,9 @@ extern "C" void kernel_main()
 
     void task_a();
     void task_b();
-    ProcManager::create_kernel_thread(task_a, "Task A");
-    ProcManager::create_kernel_thread(task_b, "Task B");
+    // ProcManager::create_kernel_thread(task_a, "Task A");
+    // ProcManager::create_kernel_thread(task_b, "Task B");
+    ProcManager::user_init();
 
-    Drivers::uart_puts("[Kernel] Scheduler Starting...\n");
     ProcManager::scheduler();
 }

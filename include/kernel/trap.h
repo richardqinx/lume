@@ -48,3 +48,4 @@ namespace Trap
     extern "C" void kernelvec();
     extern "C" void kerneltrap(struct Trapframe *tf);
 }
+extern "C" void usertrap();

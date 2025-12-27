@@ -1,5 +1,6 @@
 #pragma once
 #include "common/types.h"
+#include "kernel/trap.h"
 
 struct Context
 {
@@ -32,18 +33,20 @@ enum ProcState{
 struct Proc
 {
     struct Context context;
+    struct Trapframe *tf;
+
+    uint64 *pagetable;
 
     enum ProcState state;
     int pid;
 
     void* kstack;
     char name[16];
+    uint64 sz;
 
     //
 };
 
-inline void intr_on() { asm volatile("csrs sstatus, 0x2"); }
-inline void intr_off() { asm volatile("csrc sstatus, 0x2"); }
 
 namespace ProcManager
 {
@@ -52,4 +55,10 @@ namespace ProcManager
     void yield();
 
     void create_kernel_thread(void (*func)(), const char *name);
+
+    void user_init();
 }
+
+void forkret();
+struct Proc *myproc();
+void usertrapret();

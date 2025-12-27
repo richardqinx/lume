@@ -3,8 +3,11 @@
 #include "drivers/uart.h"
 #include "kernel/proc.h"
 #include "kernel/timer.h"
+#include "kernel/syscall.h"
+#include "kernel/riscv.h"
 
 extern void usertrapret();
+extern void forkret();
 
 void panic(const char *s)
 {
@@ -71,10 +74,10 @@ namespace Trap
             switch (scause)
             {
             case 8:
-                Drivers::uart_puts("[Syscall] ecall for User Mode\n");
-                tf->epc += 4;
+                Drivers::uart_puts("[Syscall] ecall from Kernel Mode? Panic.\n");
+                panic("Kernel Ecall");
                 break;
-            
+
             case 12:
             case 13:
             case 15:
@@ -136,9 +139,12 @@ extern "C" void usertrap()
     struct Proc *p = myproc();
     
     extern struct Proc procs[];
-    for(int i = 0; i < 10; ++i)
-        if(procs[i].state == RUNNING)
-            p = &procs[i];
+    if (!p)
+    {
+        for (int i = 0; i < 10; ++i)
+            if (procs[i].state == RUNNING)
+                p = &procs[i];
+    }
 
     uint64 sepc;
     asm volatile("csrr %0, sepc" : "=r"(sepc));
@@ -146,31 +152,26 @@ extern "C" void usertrap()
 
     if(scause == 8)
     {
+        intr_on();
         p->tf->epc += 4;
 
-        uint64 syscall_num = p->tf->a7;
+        syscall();
 
-        if (syscall_num == 1)
-        {
-            char c = (char)p->tf->a0;
-            Drivers::uart_putc(c);
-        }
-        else
-        {
-            Drivers::uart_puts("Unknown Syscall\n");
-        }
+        intr_off();
     }
     else if ((scause & (1L << 63)) && (scause & 0xF) == 5)
     {
+        Drivers::uart_puts("\nTick\n");
         Timer::set_next_trigger();
         ProcManager::yield();
     }
     else
     {
         Drivers::uart_puts("Unexpected User Trap!\n");
+        Drivers::print_hex(scause);
         while (1)
             ;
     }
 
-    forkret();
+    usertrapret();
 }

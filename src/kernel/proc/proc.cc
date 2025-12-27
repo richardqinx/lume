@@ -6,6 +6,8 @@
 #include "common/types.h"
 #include "kernel/riscv.h"
 #include "kernel/config.h"
+#include "kernel/spinlock.h"
+#include "lib/string.h"
 
 #define NPROC 10
 
@@ -13,18 +15,14 @@ extern "C" void swtch(struct Context *old_ctx, struct Context *new_ctx);
 extern char uservec[];
 extern "C" void userret(uint64, uint64);
 extern char trampoline[];
-extern void *memset(void *dst, int c, uint n);
 
 struct Proc procs[NPROC];
 struct Context main_context;
 struct Proc *current_proc = nullptr;
+struct spinlock proc_lock;
 
-void str_copy(char *dst, const char *src)
-{
-    while (*src)
-        *dst++ = *src++;
-    *dst = 0;
-}
+int nextpid = 1;
+
 
 uchar initcode[] = {
     0x13, 0x05, 0x50, 0x05, // li a0, 85 ('U')
@@ -35,6 +33,7 @@ uchar initcode[] = {
 
 struct Proc *myproc()
 {
+    // 简化处理
     return current_proc;
 }
 
@@ -42,10 +41,10 @@ void usertrapret()
 {
     struct Proc *p = myproc();
 
-    asm volatile("csrc sstatus, %0" : : "r"(SSTATUS_SIE));
+    intr_off();
 
     uint64 trampoline_uservec = TRAMPOLINE + (uservec - trampoline);
-    asm volatile("csrw stvec, %0" : : "r"(trampoline_uservec));
+    w_stvec(trampoline_uservec);
 
     p->tf->kernel_satp = r_satp();
     p->tf->kernel_sp = (uint64)p->kstack + PGSIZE;
@@ -68,16 +67,120 @@ void usertrapret()
 void forkret()
 {
     //....
+    Spinlock::release(&proc_lock);
 
-
-
+    Drivers::uart_puts("[Proc] forkret: jumping to user.\n");
     usertrapret();
+}
+
+static Proc *allocproc()
+{
+    struct Proc* p;
+    Spinlock::acquire(&proc_lock);
+    for (p = procs; p < &procs[NPROC]; p++)
+    {
+        if (p->state == UNUSED)
+        {
+            goto found;
+        }
+    }
+
+    Spinlock::release(&proc_lock);
+    return 0;
+
+found:
+    p->state = USED;
+    p->pid = nextpid++;
+
+    if ((p->tf = (struct Trapframe *)PMM::alloc_page()) == 0)
+    {
+        p->state = UNUSED;
+        Spinlock::release(&proc_lock);
+        return 0;
+    }
+    if ((p->kstack = PMM::alloc_page()) == 0)
+    {
+        PMM::free_page(p->tf);
+        p->state = UNUSED;
+        Spinlock::release(&proc_lock);
+        return 0;
+    }
+    memset(p->kstack, 0, PGSIZE);
+
+    memset(&p->context, 0, sizeof(p->context));
+    p->context.ra = (uint64)forkret;
+    p->context.sp = (uint64)p->kstack + PGSIZE;
+
+    Spinlock::release(&proc_lock);
+    return p;
+}
+
+static void freeproc(struct Proc *p)
+{
+    if (p->tf)
+        PMM::free_page(p->tf);
+    p->tf = 0;
+
+    if (p->kstack)
+        PMM::free_page(p->kstack);
+    p->kstack = 0;
+
+    if (p->pagetable)
+        VM::uvmfree(p->pagetable, p->sz);
+    p->pagetable = 0;
+
+    p->sz = 0;
+    p->pid = 0;
+    p->parent = 0;
+    p->name[0] = 0;
+    p->chan = 0;
+    p->state = UNUSED;
+}
+
+int fork()
+{
+    int pid;
+    struct Proc *np;
+    struct Proc *p = myproc();
+
+    if ((np = allocproc()) == 0)
+    {
+        return -1;
+    }
+
+    np->pagetable = VM::uvmcreate();
+    if (VM::uvmcopy(p->pagetable, np->pagetable, p->sz) < 0)
+    {
+        PMM::free_page(np->kstack);
+        PMM::free_page(np->tf);
+        Spinlock::acquire(&proc_lock);
+        np->state = UNUSED;
+        Spinlock::release(&proc_lock);
+        return -1;
+    }
+    np->sz = p->sz;
+
+    *(np->tf) = *(p->tf);
+
+    np->tf->a0 = 0;
+
+    strcpy(np->name, p->name);
+    np->parent = p;
+
+    Spinlock::acquire(&proc_lock);
+    np->state = RUNNABLE;
+    pid = np->pid;
+    Spinlock::release(&proc_lock);
+
+    return pid;
 }
 
 namespace ProcManager
 {
     void init()
     {
+        Spinlock::init(&proc_lock, "proc");
+
         for (int i = 0; i < NPROC; i++)
         {
             procs[i].state = UNUSED;
@@ -116,7 +219,7 @@ namespace ProcManager
         p->context.sp = (uint64)p->kstack + 4096;
 
         p->state = RUNNABLE;
-        str_copy(p->name, name);
+        strcpy(p->name, name);
 
         Drivers::uart_puts("[Proc] Created thread: ");
         Drivers::uart_puts(name);
@@ -126,11 +229,13 @@ namespace ProcManager
     void yield()
     {
         struct Proc *p = myproc();
+        Spinlock::acquire(&proc_lock);
         if (p && p->state == RUNNING)
         {
             p->state = RUNNABLE;
             swtch(&p->context, &main_context);
         }
+        Spinlock::release(&proc_lock);
     }
 
     void scheduler()
@@ -140,18 +245,15 @@ namespace ProcManager
 
         for (;;)
         {
-            int nothing_found = 1;
-
             intr_on();
+
+            Spinlock::acquire(&proc_lock);
 
             for (p = procs; p < &procs[NPROC]; p++)
             {
                 if (p->state == RUNNABLE)
                 {
-                    nothing_found = 0;
-
                     p->state = RUNNING;
-
                     current_proc = p;
 
                     swtch(&main_context, &p->context);
@@ -159,56 +261,24 @@ namespace ProcManager
                     current_proc = nullptr;
                 }
             }
-            if (nothing_found)
-            {
-                asm volatile("wfi");
-            }
+            Spinlock::release(&proc_lock);
         }
     }
 
     void user_init()
     {
-        struct Proc *p = nullptr;
-        for(int i = 0; i < NPROC; ++i)
-        {
-            if(procs[i].state == UNUSED)
-            {
-                p = &procs[i];
-                p->pid = i + 1;
-                break;
-            }
-        }
+        struct Proc *p;
 
+        p = allocproc();
         if (!p)
         {
-            Drivers::uart_puts("user_init: no free procs\n");
+            Drivers::uart_puts("user_init: failed\n");
             return;
         }
-
-        p->kstack = PMM::alloc_page();
-        if (p->kstack == 0)
-        {
-            Drivers::uart_puts("user_init: kstack alloc failed\n");
-            return;
-        }
-
-        p->tf = (struct Trapframe*)PMM::alloc_page();
-
-        if (p->tf == 0)
-        {
-            Drivers::uart_puts("user_init: tf alloc failed\n");
-            return;
-        }
-        memset(p->tf, 0, PGSIZE);
 
         p->pagetable = VM::uvmcreate();
-
-        // if (VM::mappages(p->pagetable, TRAMPOLINE, PGSIZE,
-        //                  (uint64)trampoline, PTE_R | PTE_X) < 0)
-        // {
-        //     Drivers::uart_puts("user_init: map trampoline failed\n");
-        //     return;
-        // }
+        VM::uvminit(p->pagetable, initcode, sizeof(initcode));
+        p->sz = PGSIZE;
 
         if (VM::mappages(p->pagetable, TRAPFRAME, PGSIZE,
                          (uint64)p->tf, PTE_R | PTE_W) < 0)
@@ -217,22 +287,121 @@ namespace ProcManager
             return;
         }
 
-        VM::uvminit(p->pagetable, initcode, sizeof(initcode));
-        p->sz = PGSIZE;
-
+        
         p->tf->epc = 0;
         p->tf->sp = PGSIZE;
 
-        memset(&p->context, 0, sizeof(p->context));
-        p->context.ra = (uint64)forkret;
-        p->context.sp = (uint64)p->kstack + PGSIZE;
+        strcpy(p->name, "initcode");
 
+        
+        Spinlock::acquire(&proc_lock);
         p->state = RUNNABLE;
-
-        const char *name = "initcode";
-        for (int i = 0; name[i] && i < 15; i++)
-            p->name[i] = name[i];
+        Spinlock::release(&proc_lock);
 
         Drivers::uart_puts("[Proc] user_init success. PID: 1\n");
     }
+
+    void sleep(void *chan, struct spinlock *lk)
+    {
+        struct Proc *p = myproc();
+        if(lk != &proc_lock)
+        {
+            Drivers::uart_puts("sleep: lock mismatch\n");
+            while (1)
+                ;
+        }
+        p->chan = chan;
+        p->state = SLEEPING;
+
+        swtch(&p->context, &main_context);
+
+        p->chan = 0;
+    }
+
+    void wakeup(void *chan)
+    {
+        for(struct Proc *p = procs; p < &procs[NPROC]; p++)
+        {
+            if (p->state == SLEEPING && p->chan == chan)
+            {
+                p->state = RUNNABLE;
+            }
+        }
+    }
+
+    void exit(int status)
+    {
+        struct Proc *p = myproc();
+        struct Proc *initproc = &procs[0];
+
+        if (p == initproc)
+        {
+            Drivers::uart_puts("init exiting!\n");
+            while (1)
+                ;
+        }
+
+        Spinlock::acquire(&proc_lock);
+
+        for (struct Proc *pp = procs; pp < &procs[NPROC]; pp++)
+        {
+            if (pp->parent == p)
+            {
+                pp->parent = initproc;
+                wakeup(initproc);
+            }
+        }
+
+        wakeup(p->parent);
+
+        p->xstate = status;
+        p->state = ZOMBIE;
+
+        swtch(&p->context, &main_context);
+
+        while(1);
+    }
+
+    int wait(uint64 addr)
+    {
+        struct Proc* np;
+        int havekids, pid;
+        struct Proc *p = myproc();
+
+        Spinlock::acquire(&proc_lock);
+
+        for(;;)
+        {
+            havekids = 0;
+            for (np = procs; np < &procs[NPROC]; np++)
+            {
+                if (np->parent == p)
+                {
+                    havekids = 1;
+                    if (np->state == ZOMBIE)
+                    {
+                        // Found one
+                        pid = np->pid;
+                        if (addr != 0)
+                        {
+                            // copyout(p->pagetable, addr, (char*)&np->xstate, sizeof(np->xstate));
+                            // 暂时不做 copyout
+                        }
+                        freeproc(np);
+                        Spinlock::release(&proc_lock);
+                        return pid;
+                    }
+                }
+            }
+            if (!havekids || p->state == ZOMBIE)
+            {
+                Spinlock::release(&proc_lock);
+                return -1;
+            }
+            sleep(p, &proc_lock);
+        }
+    }
+
+    
+
 }

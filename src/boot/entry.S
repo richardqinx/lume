@@ -5,6 +5,8 @@ _start:
     la t0, g_dtb_addr
     sd a1, 0(t0)
 
+    mv tp, a0
+
     la sp, stack_top
 
     call kernel_main

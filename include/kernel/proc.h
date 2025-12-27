@@ -1,6 +1,7 @@
 #pragma once
 #include "common/types.h"
 #include "kernel/trap.h"
+#include "kernel/spinlock.h"
 
 struct Context
 {
@@ -44,7 +45,9 @@ struct Proc
     char name[16];
     uint64 sz;
 
-    //
+    struct Proc *parent;
+    void *chan;
+    int xstate;
 };
 
 
@@ -57,8 +60,13 @@ namespace ProcManager
     void create_kernel_thread(void (*func)(), const char *name);
 
     void user_init();
+    void exit(int status);
+    int wait(uint64 addr);
+    void sleep(void *chan, struct spinlock *lk);
+    void wakeup(void *chan);
 }
 
 void forkret();
 struct Proc *myproc();
 void usertrapret();
+int fork();

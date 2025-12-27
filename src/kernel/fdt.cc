@@ -1,6 +1,7 @@
 #include "common/types.h"
 #include "drivers/uart.h"
 #include "kernel/config.h"
+#include "lib/string.h"
 
 inline uint32_t bswap(uint32_t x)
 {
@@ -29,27 +30,6 @@ struct fdt_header
 #define FDT_NOP 4
 #define FDT_END 9
 
-int strcmp(const char* s1, const char* s2)
-{
-    while (*s1 && (*s1 == *s2))
-    {
-        s1++;
-        s2++;
-    }
-    return *(const unsigned char*)s1 - *(const unsigned char*)s2;
-}
-
-int memcmp(const void *ptr1, const void *ptr2, uint32 num)
-{
-    const unsigned char *p1 = (const unsigned char *)ptr1;
-    const unsigned char *p2 = (const unsigned char *)ptr2;
-    for (uint32 i = 0; i < num; i++)
-    {
-        if (p1[i] != p2[i])
-            return p1[i] - p2[i];
-    }
-    return 0;
-}
 
 void fdt_init(uint64 dtb)
 {

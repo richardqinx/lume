@@ -1,94 +1,136 @@
-# Lume
-> Luminescence in the Deep Night
+# Lume Operating System
 
-Lume is a multitasking operating system kernel built for the RISC-V 64 architecture.Developed from the ground up, it was created to explore the art of modern operating system.
+**Lume** is an experimental operating system kernel built from scratch for the **RISC-V 64** architecture. This project aims to explore the core implementation details of a modern Unix-like operating system.
 
-## Architecture Overview
+## 🚀 Current Status
 
-The initialization sequence of Lume follows modern OS design principles:
+The project is currently deep in **Phase 2: Memory & Process Management**.
 
-* 1.Boot: entry.asm sets up the initial stack and prepares the C++ environment.
+The kernel has successfully transitioned from the bootloader to supervisor mode, enabled Sv39 virtual memory paging, and supports the execution of the first user-space process (`initcode`). It features basic process lifecycle management (creation, execution, termination, and reclamation).
 
-* 2.Discovery: The FDT parser probes the DTB for hardware layout information.
+### ✅ Key Features Implemented
 
-* 3.Memory: Establishes physical and virtual memory mappings.
+* **Architecture Support**
+    * **Target**: RISC-V 64-bit (Sv39).
+    * **Modes**: Supervisor Mode (S-Mode) and User Mode (U-Mode).
+    * **Boot Flow**: OpenSBI -> Kernel Entry -> Main.
 
-* 4.Asynchrony: Installs the Trap Handler and enables the SBI timer interrupt.
+* **Memory Management**
+    * **PMM (Physical Memory Management)**: Page frame allocator based on a free-list structure.
+    * **VM (Virtual Memory)**: Full Sv39 multi-level page table mapping.
+    * **Address Space**:
+        * **Kernel**: Higher-half mapping (Direct Mapping) + Trampoline.
+        * **User**: Independent page tables per process, containing code, data, stack, and trap pages.
+    * **Isolation**: `Trampoline` page mechanism for safe Kernel/User transitions.
 
-* 5.Concurrency: Initializes the Process Manager and enters the scheduler loop to run tasks.
+* **Process & Scheduling**
+    * **Process Model**: `struct Proc` (PCB) managing independent kernel stacks and trap frames.
+    * **Scheduling**: Preemptive Round-Robin scheduler driven by hardware timer interrupts.
+    * **Context Switching**: Assembly-level `swtch` logic to save/restore callee-saved registers.
+    * **Synchronization**: Spinlocks for protecting critical kernel data structures.
 
-## Roadmap
+* **System Calls**
+    A syscall dispatch framework (`ecall`) is established, currently supporting:
+    * `SYS_fork`: Create a child process (deep copy of memory and page tables).
+    * `SYS_exit`: Terminate the current process.
+    * `SYS_wait`: Wait for a child process to exit and reap resources.
+    * `SYS_write`: Write output to the console (currently direct via UART).
+    * `SYS_getpid`: Retrieve the current process ID.
+    * `SYS_putc`: Character output for debugging.
 
-### Phase 1: Foundation (Current Status)
+* **Drivers**
+    * **UART**: Basic initialization and polled I/O for kernel logging.
 
-- [x] Bootloader & Entry: Successful hand-off from OpenSBI to Kernel.
+## 📂 Project Structure
 
-- [x] FDT Parsing: Dynamic hardware discovery via Device Tree.
+```text
+Lume/
+├── src/
+│   ├── boot/           # Bootloader code (entry.S)
+│   ├── kernel/         # Core kernel subsystems
+│   │   ├── mm/         # Memory Management (pmm.cc, vm.cc)
+│   │   ├── proc/       # Process Management (proc.cc, swtch.S)
+│   │   ├── trap/       # Interrupt & Exception handling (trap.S, trampoline.S)
+│   │   ├── syscall.cc  # System call dispatcher
+│   │   ├── main.cc     # Kernel entry point
+│   │   └── ...
+│   ├── user/           # User-space programs (init.cc, usys.S)
+│   ├── drivers/        # Hardware drivers (uart.cc)
+│   └── lib/            # Kernel utility libraries (string.cc)
+├── include/            # Header files
+├── Makefile            # Build configuration
+└── link.ld             # Kernel linker script
+```
 
-- [x] Physical Memory Management: Basic page-frame allocator.
+## 🛠️ Build & Run
+This project relies on the GCC RISC-V toolchain and QEMU emulator.
 
-- [x] Basic Traps: Handling supervisor-mode exceptions and interrupts.
+### Prerequisites
+Compiler: riscv64-linux-gnu-gcc / g++
 
-### Phase 2: Memory & Process Management
-- [x] Virtual Memory: Full SV39 page table implementation with kernel/user space separation.
+Emulator: qemu-system-riscv64
 
-- [ ] Slab Allocator: Efficient kernel-level object allocation (kmalloc).
+Build Tool: make
 
-- [ ] Process Lifecycle: Implementation of fork(), exec(), and exit().
+### Commands
+1. **Compile Kernel & User Programs:**
 
-- [x] Preemptive Scheduling: Priority-based or Round-robin scheduler.
-
-### Phase 3: I/O & File System
-- [ ] VirtIO Drivers: Support for VirtIO-Block and VirtIO-Net devices.
-
-- [ ] Virtual File System (VFS): Abstract layer for multiple file system support.
-
-- [ ] Initial Ramdisk (initrd): Loading a basic user-space environment during boot.
-
-- [ ] Fat32/Ext2 Support: Persistent storage capabilities.
-
-Phase 4: User Space & Stability
-- [ ] System Call Interface: Standardized API for user-space applications.
-
-- [ ] User-mode Shell: A basic CLI to interact with the kernel.
-
-- [ ] Multicore (SMP): Booting secondary harts and implementing spinlocks/mutexes.
-
-- [ ] C Standard Library (nolibc): Providing a runtime for user-level C programs.
-
-## Quick Start
-### Requirements
-* riscv64-linux-gnu-gcc toolchain
-* QEMU (riscv64)
-### Build and Run
-~~~bash
-make clean
+```Bash
 make all
+```
+2. **Run in QEMU (No Graphic Mode):**
+
+```Bash
 make run
-~~~
-When you see the following output, Lumen has successfully illuminated your hardware:
-~~~bash
-[Lume OS Kernel] Booted in S-Mode.
-2025 Richard Qin
+```
+Expected Output: You will see kernel boot logs, page table initialization, and output from the first user process (`initcode`).
 
+3. **Debug Mode (GDB):**
 
-[Boot] Kernel started.
-PMM: Initializing from[Boot] PMM initialized.
-[Boot] Kernel page table created.
-[Boot] MMU ENABLED! We are now using virtual addresses.
-[Trap] Initialized stvec to: 0x0000000080200090
-[Boot] Trap Handler Installed.
-[Boot] Timer Interrupt Enabled.
-[Boot] ProcManager Initialized.
-[Proc] Created thread: Task A
-[Proc] Created thread: Task B
-[Kernel] Scheduler Starting...
-[Proc] Scheduler started.
-...
-~~~
+```Bash
+make debug
+```
+This starts QEMU in a paused state, waiting for a GDB connection on port 1234.
 
-## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+4. **Clean Build Artifacts:**
 
-##
-Richard Qin Dec 2025
+```Bash
+make clean
+```
+
+## 🗺️ Roadmap
+* [x] Phase 1: Foundation
+
+    [x] UART Driver & Formatted Output.
+
+    [x] Physical Memory Allocator (PMM).
+
+    [x] Basic Interrupt Handling Framework.
+
+* [x] Phase 2: Memory & Process (In Progress)
+
+    [x] Virtual Memory (Sv39) & Kernel Page Tables.
+
+    [x] User Address Space Construction.
+
+    [x] Preemptive Scheduler.
+
+    [x] Basic System Calls (fork, exit, wait, write).
+
+    [ ] exec System Call (ELF Loader).
+
+    [ ] sbrk for Dynamic Heap Growth.
+
+* [ ] Phase 3: File System & I/O (Planned)
+
+    [ ] VirtIO Block Device Driver.
+
+    [ ] Virtual File System (VFS).
+
+    [ ] File I/O System Calls (open, read, close).
+* [ ] Phase 4: Waiting for you...
+
+## 📄 License
+This project is open-source under the MIT License. See the LICENSE file for details.
+------------
+Copyright (c) 2025 Richard Qin

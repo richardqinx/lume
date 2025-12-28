@@ -45,7 +45,7 @@ namespace VM
                 if (!alloc || (pagetable = (pagetable_t)PMM::alloc_page()) == 0)
                     return 0;
                 memset(pagetable, 0, PGSIZE);
-                pagetable = (pagetable_t)PMM::alloc_page();
+                // pagetable = (pagetable_t)PMM::alloc_page();
                 *pte = PA2PTE(pagetable) | PTE_V;
             }
         }

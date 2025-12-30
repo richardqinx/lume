@@ -10,6 +10,7 @@
 #include "lib/string.h"
 
 #define NPROC 10
+#define NCPU 8
 
 extern "C" void swtch(struct Context *old_ctx, struct Context *new_ctx);
 extern char uservec[];
@@ -17,9 +18,11 @@ extern "C" void userret(uint64, uint64);
 extern char trampoline[];
 
 struct Proc procs[NPROC];
-struct Context main_context;
+struct Context main_context; // The main_context here should actually be one per CPU, but it's temporarily kept for compatibility with single-core logic
 struct Proc *current_proc = nullptr;
-struct spinlock proc_lock;
+struct Spinlock proc_lock;
+
+struct cpu cpus[NCPU];
 
 int nextpid = 1;
 
@@ -28,7 +31,12 @@ extern char initcode_end[];
 
 struct Proc *myproc()
 {
-    // 简化处理
+    // Keep a simple implementation for now, should be changed later to:
+    // push_off();
+    // struct cpu *c = mycpu();
+    // struct Proc *p = c->proc;
+    // pop_off();
+    // return p;
     return current_proc;
 }
 
@@ -62,7 +70,7 @@ void usertrapret()
 void forkret()
 {
     //....
-    Spinlock::release(&proc_lock);
+    proc_lock.release();
 
     Drivers::uart_puts("[Proc] forkret: jumping to user.\n");
     usertrapret();
@@ -71,7 +79,7 @@ void forkret()
 static Proc *allocproc()
 {
     struct Proc* p;
-    Spinlock::acquire(&proc_lock);
+    proc_lock.acquire();
     for (p = procs; p < &procs[NPROC]; p++)
     {
         if (p->state == UNUSED)
@@ -80,7 +88,7 @@ static Proc *allocproc()
         }
     }
 
-    Spinlock::release(&proc_lock);
+    proc_lock.release();
     return 0;
 
 found:
@@ -90,14 +98,14 @@ found:
     if ((p->tf = (struct Trapframe *)PMM::alloc_page()) == 0)
     {
         p->state = UNUSED;
-        Spinlock::release(&proc_lock);
+        proc_lock.release();
         return 0;
     }
     if ((p->kstack = PMM::alloc_page()) == 0)
     {
         PMM::free_page(p->tf);
         p->state = UNUSED;
-        Spinlock::release(&proc_lock);
+        proc_lock.release();
         return 0;
     }
     memset(p->kstack, 0, PGSIZE);
@@ -106,7 +114,7 @@ found:
     p->context.ra = (uint64)forkret;
     p->context.sp = (uint64)p->kstack + PGSIZE;
 
-    Spinlock::release(&proc_lock);
+    proc_lock.release();
     return p;
 }
 
@@ -148,7 +156,7 @@ int fork()
     if (VM::uvmcopy(p->pagetable, np->pagetable, p->sz) < 0)
     {
         freeproc(np);
-        Spinlock::release(&proc_lock);
+        proc_lock.release(); // Maybe a bug
         return -1;
     }
     np->sz = p->sz;
@@ -167,10 +175,10 @@ int fork()
     strcpy(np->name, p->name);
     np->parent = p;
 
-    Spinlock::acquire(&proc_lock);
+    proc_lock.acquire();
     np->state = RUNNABLE;
     pid = np->pid;
-    Spinlock::release(&proc_lock);
+    proc_lock.release();
 
     return pid;
 }
@@ -179,7 +187,7 @@ namespace ProcManager
 {
     void init()
     {
-        Spinlock::init(&proc_lock, "proc");
+        proc_lock.init("proc");
 
         for (int i = 0; i < NPROC; i++)
         {
@@ -229,13 +237,13 @@ namespace ProcManager
     void yield()
     {
         struct Proc *p = myproc();
-        Spinlock::acquire(&proc_lock);
+        proc_lock.acquire();
         if (p && p->state == RUNNING)
         {
             p->state = RUNNABLE;
             swtch(&p->context, &main_context);
         }
-        Spinlock::release(&proc_lock);
+        proc_lock.release();
     }
 
     void scheduler()
@@ -247,7 +255,7 @@ namespace ProcManager
         {
             intr_on();
 
-            Spinlock::acquire(&proc_lock);
+            proc_lock.acquire();
 
             for (p = procs; p < &procs[NPROC]; p++)
             {
@@ -255,13 +263,13 @@ namespace ProcManager
                 {
                     p->state = RUNNING;
                     current_proc = p;
-
+                    // Switch context: from scheduler to process
                     swtch(&main_context, &p->context);
-
+                    // The process returns here after yielding the CPU
                     current_proc = nullptr;
                 }
             }
-            Spinlock::release(&proc_lock);
+            proc_lock.release();
         }
     }
 
@@ -296,21 +304,20 @@ namespace ProcManager
         strcpy(p->name, "initcode");
 
         
-        Spinlock::acquire(&proc_lock);
+        proc_lock.acquire();
         p->state = RUNNABLE;
-        Spinlock::release(&proc_lock);
+        proc_lock.release();
 
         Drivers::uart_puts("[Proc] user_init success. PID: 1\n");
     }
 
-    void sleep(void *chan, struct spinlock *lk)
+    void sleep(void *chan, struct Spinlock *lk)
     {
         struct Proc *p = myproc();
         if(lk != &proc_lock)
         {
-            Drivers::uart_puts("sleep: lock mismatch\n");
-            while (1)
-                ;
+            proc_lock.acquire();
+            lk->release();
         }
         p->chan = chan;
         p->state = SLEEPING;
@@ -318,6 +325,12 @@ namespace ProcManager
         swtch(&p->context, &main_context);
 
         p->chan = 0;
+
+        if (lk != &proc_lock)
+        {
+            proc_lock.release();
+            lk->acquire();
+        }
     }
 
     void wakeup(void *chan)
@@ -343,7 +356,8 @@ namespace ProcManager
                 ;
         }
 
-        Spinlock::acquire(&proc_lock);
+        proc_lock.acquire();
+        wakeup(p->parent);
 
         for (struct Proc *pp = procs; pp < &procs[NPROC]; pp++)
         {
@@ -353,8 +367,6 @@ namespace ProcManager
                 wakeup(initproc);
             }
         }
-
-        wakeup(p->parent);
 
         p->xstate = status;
         p->state = ZOMBIE;
@@ -370,7 +382,7 @@ namespace ProcManager
         int havekids, pid;
         struct Proc *p = myproc();
 
-        Spinlock::acquire(&proc_lock);
+        proc_lock.acquire();
 
         for(;;)
         {
@@ -390,16 +402,18 @@ namespace ProcManager
                             // 暂时不做 copyout
                         }
                         freeproc(np);
-                        Spinlock::release(&proc_lock);
+                        proc_lock.release();
                         return pid;
                     }
                 }
             }
             if (!havekids || p->state == ZOMBIE)
             {
-                Spinlock::release(&proc_lock);
+                proc_lock.release();
                 return -1;
             }
+            // sleep will atomically release proc_lock and sleep
+            // When returning, it will reacquire proc_lock
             sleep(p, &proc_lock);
         }
     }

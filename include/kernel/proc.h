@@ -3,11 +3,13 @@
 #include "kernel/trap.h"
 #include "kernel/spinlock.h"
 
+// Context structure, used for context switching
 struct Context
 {
     uint64 ra;
     uint64 sp;
 
+    // Callee-saved registers
     uint64 s0;
     uint64 s1;
     uint64 s2;
@@ -22,7 +24,9 @@ struct Context
     uint64 s11;
 };
 
-enum ProcState{
+// Process State Enumeration
+enum ProcState
+{
     UNUSED,
     USED,
     SLEEPING,
@@ -31,6 +35,7 @@ enum ProcState{
     ZOMBIE,
 };
 
+// Process Control Block (PCB)
 struct Proc
 {
     struct Context context;
@@ -41,15 +46,25 @@ struct Proc
     enum ProcState state;
     int pid;
 
-    void* kstack;
+    void *kstack;
     char name[16];
     uint64 sz;
 
     struct Proc *parent;
     void *chan;
     int xstate;
+
+    // Implement later
 };
 
+// CPU status structure
+struct cpu
+{
+    struct Proc *proc;      // Processes currently running on this CPU
+    struct Context context; // Save the scheduler context here
+    int noff;               // Depth of push_off()
+    int intena;             // Interrupt enable status before closing
+};
 
 namespace ProcManager
 {
@@ -62,7 +77,8 @@ namespace ProcManager
     void user_init();
     void exit(int status);
     int wait(uint64 addr);
-    void sleep(void *chan, struct spinlock *lk);
+
+    void sleep(void *chan, Spinlock *lk);
     void wakeup(void *chan);
 }
 

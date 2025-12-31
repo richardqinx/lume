@@ -5,6 +5,7 @@
 #include "kernel/syscall.h"
 #include "kernel/mm.h"
 #include "kernel/timer.h"
+#include "drivers/plic.h"
 #include "lib/string.h"
 
 
@@ -58,6 +59,22 @@ namespace Trap
         if (is_interrupt && code == 9)
         {
             // Supervisor External Interrupt (IRQ 9)
+            int irq = PILC::claim();
+
+            if (irq == 10)
+            {
+                // uart_intr();
+            }
+            else if (irq >= 1 && irq <= 8)
+            {
+                // virtio_disk_intr();
+            }
+
+            if (irq > 0)
+            {
+                PILC::complete(irq);
+            }
+
             return 1;
         }
         else if (is_interrupt && code == 5)

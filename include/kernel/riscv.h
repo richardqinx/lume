@@ -79,6 +79,7 @@ w_sip(uint64 x)
 // Supervisor Interrupt Enable
 #define SIE_SEIE (1L << 9) // external
 #define SIE_STIE (1L << 5) // timer
+#define SIE_SSIE (1L << 1) // software
 static inline uint64
 r_sie()
 {

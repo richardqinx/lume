@@ -10,7 +10,7 @@ SRC_DIR   := src
 
 CFLAGS   := -Wall -Wextra -O2 -g -ffreestanding -nostdlib -mcmodel=medany -Iinclude
 CXXFLAGS := $(CFLAGS) -fno-exceptions -fno-rtti -fno-use-cxa-atexit
-LINKER_SCRIPT := link.ld
+LINKER_SCRIPT := linker.ld
 
 UPROGS_SRC := $(SRC_DIR)/user/init.cc
 UPROGS_OBJ := $(BUILD_DIR)/user/init.o

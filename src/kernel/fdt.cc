@@ -96,17 +96,6 @@ void fdt_init(uint64 dtb)
                     }
                 }
 
-                // if (g_clint_base == 0)
-                // {
-                //     for (uint32 i = 0; i < len; i++)
-                //     {
-                //         if (data[i] == 'c' && data[i + 1] == 'l' && data[i + 2] == 'i' && data[i + 3] == 'n')
-                //         {
-                //             g_clint_base = current_reg_addr;
-                //             break;
-                //         }
-                //     }
-                // }
             }
         }
     }

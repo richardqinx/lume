@@ -14,7 +14,9 @@
 #define UART_LSR_RX_READY   0x01
 #define UART_LSR_TX_EMPTY   0x20
 
-namespace Drivers{
+namespace Drivers
+{
+
     inline volatile uint8_t &reg(uint32_t offset)
     {
         return *reinterpret_cast<volatile uint8_t *>(g_uart_base + offset);
@@ -22,35 +24,34 @@ namespace Drivers{
 
     void uart_init()
     {
-        
         if (g_uart_base == 0)
             return;
 
-        reg(UART_IER) = 0x00;
-
-        reg(UART_LCR) = 0x80;
-        reg(0x00) = 0x03;
-        reg(0x01) = 0x00;
-
-        reg(UART_LCR) = 0x03;
-
+        reg(UART_IER) = 0x00; // Disable interrupt
+        reg(UART_LCR) = 0x80; // Set baud rate (LATCH bit)
+        reg(0x00) = 0x03;     // LSB
+        reg(0x01) = 0x00;     // MSB
+        reg(UART_LCR) = 0x03; // 8 bits, no parity, one stop bit
         reg(UART_FCR) = 0x07; // Enable FIFO, clear TX/RX queues
     }
 
     void uart_putc(char c)
     {
+        if (g_uart_base == 0)
+            return;
+
         if (c == '\n')
         {
             uart_putc('\r');
         }
 
+        // Waiting for the send buffer to be empty
         while ((reg(UART_LSR) & UART_LSR_TX_EMPTY) == 0)
-        {
-
-        }
+            ;
 
         reg(UART_THR) = c;
     }
+
 
     void uart_puts(const char *s)
     {
@@ -60,18 +61,42 @@ namespace Drivers{
         }
     }
 
-    void print_hex(uint64_t val)
+    void uart_put_int(int value)
     {
-        char buf[20];
-        const char *digits = "0123456789ABCDEF";
-        buf[0] = '0';
-        buf[1] = 'x';
-        for (int i = 0; i < 16; i++)
+        if (value == 0)
         {
-            buf[17 - i] = digits[val & 0xF];
-            val >>= 4;
+            uart_putc('0');
+            return;
         }
-        buf[18] = 0;
-        Drivers::uart_puts(buf);
+
+        if (value < 0)
+        {
+            uart_putc('-');
+            value = -value;
+        }
+
+        char buffer[16];
+        int i = 0;
+        while (value > 0)
+        {
+            buffer[i++] = (value % 10) + '0';
+            value /= 10;
+        }
+
+        while (i > 0)
+        {
+            uart_putc(buffer[--i]);
+        }
+    }
+
+    void print_hex(uint64 value)
+    {
+        uart_puts("0x");
+        char hex[] = "0123456789abcdef";
+        for (int i = 15; i >= 0; i--)
+        {
+            int nibble = (value >> (i * 4)) & 0xF;
+            uart_putc(hex[nibble]);
+        }
     }
 }

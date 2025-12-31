@@ -1,9 +1,7 @@
 #pragma once
-
 #include "common/types.h"
 
 struct cpu;
-struct Proc;
 
 // Spinlock
 // Features: Non-interruptible, busy-wait loop, extremely short hold time.

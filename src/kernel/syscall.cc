@@ -5,18 +5,20 @@
 #include "drivers/uart.h"
 #include "kernel/timer.h"
 #include "kernel/mm.h"
+#include "kernel/trap.h"
 
-extern int fork();
+extern "C++" int fork();
 
 namespace ProcManager
 {
     void exit(int status);
-    int wait(uint64 addr);
+    int wait(uint64_t addr);
 }
 
-uint64 argraw(int n)
+
+static uint64_t argraw(int n)
 {
-    struct Proc *p = myproc();
+    Proc *p = myproc();
     switch (n)
     {
     case 0:
@@ -31,76 +33,84 @@ uint64 argraw(int n)
         return p->tf->a4;
     case 5:
         return p->tf->a5;
+    default:
+        return static_cast<uint64_t>(-1);
     }
-    return -1;
 }
 
-int argint(int n, int *ip)
+static int argint(int n, int *ip)
 {
-    *ip = argraw(n);
+    *ip = static_cast<int>(argraw(n));
     return 0;
 }
 
-uint64 sys_exit()
+
+static uint64_t sys_exit()
 {
     int n;
     if (argint(0, &n) < 0)
-        return -1;
+        return static_cast<uint64_t>(-1);
     ProcManager::exit(n);
     return 0;
 }
 
-uint64 sys_fork()
+static uint64_t sys_fork()
 {
-    return fork();
+    return static_cast<uint64_t>(fork());
 }
 
-uint64 sys_wait()
+static uint64_t sys_wait()
 {
-    uint64 p;
-    p = argraw(0);
-    return ProcManager::wait(p);
+    uint64_t p = argraw(0);
+    return static_cast<uint64_t>(ProcManager::wait(p));
 }
 
-uint64 sys_getpid()
+static uint64_t sys_getpid()
 {
-    return myproc()->pid;
+    return static_cast<uint64_t>(myproc()->pid);
 }
 
-uint64 sys_putc()
+static uint64_t sys_putc()
 {
-    char c = (char)argraw(0);
+    char c = static_cast<char>(argraw(0));
     Drivers::uart_putc(c);
     return 0;
 }
 
-uint64 sys_write()
+static uint64_t sys_write()
 {
     int fd;
-    uint64 p;
     int n;
+    uint64_t p;
 
-    if (argint(0, &fd) < 0 || argint(2, &n) < 0 || argraw(1) == 0)
-        return -1;
+    if (argint(0, &fd) < 0 || argint(2, &n) < 0)
+        return static_cast<uint64_t>(-1);
+
     p = argraw(1);
 
-    if (fd == 1)
+    // Drivers::uart_puts("DEBUG: sys_write fd=");
+    // Drivers::uart_put_int(fd);
+    // Drivers::uart_puts(" len=");
+    // Drivers::uart_put_int(n);
+    // Drivers::uart_puts("\n");
+
+    if (fd == 1) // stdout
     {
-        struct Proc *proc = myproc();
-        const int max = 128;
-        char buf[max];
+        Proc *proc = myproc();
+        constexpr int MAX_WRITE_BUF = 128;
+        char buf[MAX_WRITE_BUF];
         int i = 0;
 
         while (i < n)
         {
             int len = n - i;
-            if (len > max)
-                len = max;
+            if (len > MAX_WRITE_BUF)
+                len = MAX_WRITE_BUF;
 
-            if (VM::copyin(proc->pagetable, buf, p + i, len) < 0)
+            if (VM::copyin(proc->pagetable, buf, p + i, static_cast<uint64_t>(len)) < 0)
             {
                 Drivers::uart_puts("sys_write: copyin failed\n");
-                return -1;
+                return static_cast<uint64_t>(-1);
             }
 
             for (int j = 0; j < len; j++)
@@ -109,19 +119,27 @@ uint64 sys_write()
             }
             i += len;
         }
-        return n;
+        return static_cast<uint64_t>(n);
     }
-    return -1;
+    return static_cast<uint64_t>(-1);
 }
+
 
 void syscall()
 {
-    struct Proc *p = myproc();
+    Proc *p = myproc();
     int num = p->tf->a7;
-    uint64 ret = -1;
+    uint64_t ret = static_cast<uint64_t>(-1);
+
+    Drivers::uart_puts("Syscall: ");
+    Drivers::print_hex(num);
+    Drivers::uart_puts("\n");
 
     switch (num)
     {
+    case SYS_write:
+        ret = sys_write();
+        break;
     case SYS_putc:
         ret = sys_putc();
         break;
@@ -137,14 +155,11 @@ void syscall()
     case SYS_getpid:
         ret = sys_getpid();
         break;
-    case SYS_write:
-        ret = sys_write();
-        break;
     default:
         Drivers::uart_puts("Unknown Syscall ID: ");
         Drivers::print_hex(num);
         Drivers::uart_puts("\n");
-        ret = -1;
+        ret = static_cast<uint64_t>(-1);
         break;
     }
 

@@ -1,17 +1,28 @@
 #include "kernel/spinlock.h"
 #include "kernel/riscv.h"
-#include "kernel/proc.h"
+#include "kernel/cpu.h"
+#include "kernel/proc_def.h"
 #include "drivers/uart.h"
 
 extern struct cpu cpus[];
 
-// Get the pointer of the current CPU
-// Depends on r_tp() in riscv.h to read the tp register
-struct cpu *mycpu()
+namespace ProcManager
 {
-    int id = r_tp();
-    return &cpus[id];
+    void sleep(void *chan, Spinlock *lk);
+    void wakeup(void *chan);
 }
+
+// Interrupt Depth Management
+void push_off(void);
+void pop_off(void);
+
+// // Get the pointer of the current CPU
+// // Depends on r_tp() in riscv.h to read the tp register
+// struct cpu *mycpu()
+// {
+//     int id = r_tp();
+//     return &cpus[id];
+// }
 
 // Get the current process
 // Must be called with interrupts disabled, or read atomically in a safe manner
@@ -23,10 +34,6 @@ struct Proc *myproc()
     pop_off();
     return p;
 }
-
-// Interrupt Depth Management
-void push_off(void);
-void pop_off(void);
 
 // Spinlock Implementation
 
@@ -81,7 +88,7 @@ void Spinlock::release()
     // __ATOMIC_RELEASE: Ensures all reads and writes before the Release are completed
     __atomic_store_n(&locked, 0, __ATOMIC_RELEASE);
 
-    pop_off(); // 2. 恢复中断状态
+    pop_off();
 }
 
 // Check if the current CPU holds the lock
@@ -103,7 +110,7 @@ void Mutex::init(const char *lock_name)
     name = lock_name;
     locked = 0;
     pid = 0;
-    lk.init("mutex_internal"); // 初始化内部自旋锁
+    lk.init("mutex_internal");
 }
 
 void Mutex::acquire()
@@ -158,7 +165,7 @@ void push_off(void)
     struct cpu *c = mycpu();
 
     if (c->noff == 0)
-        c->intena = old; // 记录最外层的中断状态
+        c->intena = old;
 
     c->noff += 1;
 }

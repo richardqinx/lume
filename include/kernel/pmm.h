@@ -8,9 +8,6 @@
 #define PHYSIZE (128 * 1024 * 1024)
 #define PHYSTOP (KERNBASE + PHYSIZE)
 
-#define PGSIZE 4096
-#define PGSHIFT 12
-
 // Buddy System Max Order
 // Order 10 => 2^10 pages = 1024 * 4KB = 4MB contiguous block
 // Order 11 => 2^11 pages = 8MB

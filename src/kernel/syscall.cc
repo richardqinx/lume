@@ -3,6 +3,7 @@
 #include "kernel/proc.h"
 #include "kernel/riscv.h"
 #include "drivers/uart.h"
+#include "drivers/virtio.h"
 #include "kernel/timer.h"
 #include "kernel/mm.h"
 #include "kernel/trap.h"
@@ -124,6 +125,42 @@ static uint64_t sys_write()
     return static_cast<uint64_t>(-1);
 }
 
+static uint64_t sys_read()
+{
+    int fd;
+    int n;
+    uint64_t p;
+
+    // get param: fd, buf, len
+    if (argint(0, &fd) < 0 || argint(2, &n) < 0)
+        return -1;
+    p = argraw(1);
+
+    if (fd == 0) // stdin
+    {
+        return Drivers::console_read(p, n);
+    }
+    return -1;
+}
+
+static uint64_t sys_sbrk()
+{
+    int n;
+    if (argint(0, &n) < 0)
+        return -1;
+
+    uint64_t addr = myproc()->sz;
+    if (ProcManager::growproc(n) < 0)
+        return -1;
+
+    return addr;
+}
+
+static uint64_t sys_disk_test()
+{
+    VirtIO::test_rw();
+    return 0;
+}
 
 void syscall()
 {
@@ -131,14 +168,18 @@ void syscall()
     int num = p->tf->a7;
     uint64_t ret = static_cast<uint64_t>(-1);
 
-    Drivers::uart_puts("Syscall: ");
-    Drivers::print_hex(num);
-    Drivers::uart_puts("\n");
+    /* Just For Debug */
+    // Drivers::uart_puts("Syscall: ");
+    // Drivers::print_hex(num);
+    // Drivers::uart_puts("\n");
 
     switch (num)
     {
     case SYS_write:
         ret = sys_write();
+        break;
+    case SYS_read:
+        ret = sys_read();
         break;
     case SYS_putc:
         ret = sys_putc();
@@ -154,6 +195,12 @@ void syscall()
         break;
     case SYS_getpid:
         ret = sys_getpid();
+        break;
+    case SYS_sbrk:
+        ret = sys_sbrk();
+        break;
+    case SYS_disk_test:
+        ret = sys_disk_test();
         break;
     default:
         Drivers::uart_puts("Unknown Syscall ID: ");

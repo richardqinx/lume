@@ -1,7 +1,7 @@
 #pragma once
 #include "common/types.h"
 
-namespace PILC
+namespace PLIC
 {
     // Global initialization (executed only once by hart 0)
     void init();

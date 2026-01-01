@@ -24,6 +24,7 @@ extern "C" {
     int sleep(int ticks);
     int uptime();
 
-    
+    // Debug
     void putc(char c);
+    int disk_test();
 }

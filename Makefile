@@ -13,7 +13,7 @@ CXXFLAGS := $(CFLAGS) -fno-exceptions -fno-rtti -fno-use-cxa-atexit
 LINKER_SCRIPT := linker.ld
 
 UPROGS_SRC := $(SRC_DIR)/user/init.cc
-UPROGS_OBJ := $(BUILD_DIR)/user/init.o
+UPROGS_OBJ := $(BUILD_DIR)/user/entry.o $(BUILD_DIR)/user/init.o
 ULIB_OBJ   := $(BUILD_DIR)/user/usys.o
 USER_LD    := $(SRC_DIR)/user/user.ld
 INITCODE_BIN := $(BUILD_DIR)/user/initcode
@@ -23,6 +23,9 @@ SRCS_CXX := $(shell find $(SRC_DIR) -name "*.cc" -not -path "$(SRC_DIR)/user/*")
 OBJS     := $(SRCS_S:%.S=$(BUILD_DIR)/%.o) $(SRCS_CXX:%.cc=$(BUILD_DIR)/%.o)
 
 TARGET   := $(BUILD_DIR)/kernel.elf
+
+QEMUOPTS = -drive file=fs.img,if=none,format=raw,id=x0
+QEMUOPTS += -device virtio-blk-device,drive=x0 -global virtio-mmio.force-legacy=false
 
 .PHONY: all clean run debug
 
@@ -63,15 +66,19 @@ $(BUILD_DIR)/%.o: %.cc
 	@echo "  CXX     $<"
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
-run: $(TARGET)
+fs.img:
+	@echo "  IMG     Generating fs.img (1MB)"
+	@dd if=/dev/zero of=fs.img bs=1M count=1 2>/dev/null
+
+run: $(TARGET)	fs.img
 	@echo "  QEMU    Running..."
 	@qemu-system-riscv64 -machine virt -nographic \
-		-kernel $(TARGET) -m 128M
+		-kernel $(TARGET) -m 128M $(QEMUOPTS)
 
-debug: $(TARGET)
+debug: $(TARGET) fs.img
 	@echo "  QEMU (DEBUG)  Waiting for GDB..."
 	@qemu-system-riscv64 -machine virt -nographic \
-		-kernel $(TARGET) -m 128M -s -S
+		-kernel $(TARGET) -m 128M -s -S $(QEMUOPTS)
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) fs.img

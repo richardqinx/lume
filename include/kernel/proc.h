@@ -17,6 +17,8 @@ namespace ProcManager
 
     void sleep(void *chan, Spinlock *lk);
     void wakeup(void *chan);
+
+    int growproc(int n);
 }
 
 void forkret();

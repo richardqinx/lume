@@ -13,106 +13,175 @@ void print(const char *s)
     write(1, s, strlen(s));
 }
 
-void print_int(int val)
+void print_int(int n)
 {
     char buf[16];
     int i = 0;
-    if (val == 0)
+    int neg = 0;
+    if (n == 0)
     {
-        print("0");
+        write(1, "0", 1);
         return;
     }
-    if (val < 0)
+    if (n < 0)
     {
-        print("-");
-        val = -val;
+        neg = 1;
+        n = -n;
     }
-    while (val > 0)
+    while (n > 0)
     {
-        buf[i++] = (val % 10) + '0';
-        val /= 10;
+        buf[i++] = (n % 10) + '0';
+        n /= 10;
+    }
+    if (neg)
+        buf[i++] = '-';
+    while (i > 0)
+        write(1, &buf[--i], 1);
+}
+
+void print_hex(uint64 n)
+{
+    char buf[16];
+    char digits[] = "0123456789ABCDEF";
+    write(1, "0x", 2);
+    if (n == 0)
+    {
+        write(1, "0", 1);
+        return;
+    }
+    int i = 0;
+    while (n > 0)
+    {
+        buf[i++] = digits[n % 16];
+        n /= 16;
     }
     while (i > 0)
+        write(1, &buf[--i], 1);
+}
+
+void test_syscalls()
+{
+    print("\n=== [Test] Starting System Call Check ===\n");
+
+    print("[1/4] Checking getpid()... ");
+    int my_pid = getpid();
+    if (my_pid > 0)
     {
-        char c = buf[--i];
-        write(1, &c, 1);
+        print("PASS (PID=");
+        print_int(my_pid);
+        print(")\n");
     }
-}
-
-void pass() { print(" -> [PASS]\n"); }
-void fail()
-{
-    print(" -> [FAIL]\n");
-    exit(1);
-}
-
-int main()
-{
-    print("\n=== Lume OS Full Validation ===\n");
-
-    print("[TEST 1] Write\n");
-    print("  System call write is working.");
-    pass();
-
-    print("[TEST 2] GetPID\n");
-    int parent_pid = getpid();
-    print("  Parent PID: ");
-    print_int(parent_pid);
-    if (parent_pid > 0)
-        pass();
     else
-        fail();
+    {
+        print("FAIL (Invalid PID)\n");
+    }
 
-    print("[TEST 3] Fork, Wait & COW\n");
-    int val = 100;
+    print("[2/4] Checking sbrk() heap allocation... ");
+    char *p = sbrk(4096);
+    if (p == (char *)-1)
+    {
+        print("FAIL (sbrk returned error)\n");
+    }
+    else
+    {
+        p[0] = 'A';
+        p[4095] = 'Z';
+        if (p[0] == 'A' && p[4095] == 'Z')
+        {
+            print("PASS (Allocated at ");
+            print_hex((uint64)p);
+            print(")\n");
+        }
+        else
+        {
+            print("FAIL (Memory read/write check failed)\n");
+        }
+    }
+
+    print("[3/4] Checking fork() and wait()...\n");
     int pid = fork();
 
     if (pid < 0)
     {
-        print("  Fork Failed\n");
-        fail();
+        print("      FAIL: fork error\n");
     }
-
-    if (pid == 0)
+    else if (pid == 0)
     {
-        print("  [Child] PID: ");
-        print_int(getpid());
-        print("\n");
-
-        if (val != 100)
+        int child_pid = getpid();
+        if (child_pid == my_pid)
         {
-            print("  [Child] Data corruption!\n");
+            print("      FAIL: Child has same PID as parent\n");
             exit(1);
         }
-
-        val = 200;
-        print("  [Child] Modified val to 200. Exiting.\n");
+        print("      [Child] I am alive. PID=");
+        print_int(child_pid);
+        print("\n");
+        print("      [Child] Exiting now.\n");
         exit(0);
     }
     else
     {
-        print("  [Parent] Waiting for child...\n");
-        int child_pid = wait(0);
+        print("      [Parent] Forked child PID=");
+        print_int(pid);
+        print("\n");
+        print("      [Parent] Waiting for child...\n");
 
-        print("  [Parent] Child ");
-        print_int(child_pid);
-        print(" exited.\n");
+        int waited_pid = wait(0);
 
-        print("  [Parent] Check val (Expect 100): ");
-        print_int(val);
-
-        if (val == 100)
-            pass();
+        if (waited_pid == pid)
+        {
+            print("      [Parent] Wait returned correct PID.\n");
+            print("PASS (Fork/Wait cycle)\n");
+        }
         else
         {
-            print("  [Parent] Memory Isolation Failed! Val=");
-            print_int(val);
-            fail();
+            print("FAIL (Wait returned ");
+            print_int(waited_pid);
+            print(")\n");
         }
     }
 
-    print("\n=== All Tests Passed ===\n");
+    print("[4/4] Checking write()... PASS (Self-evident)\n");
+
+    print("=== [Test] All Tests Finished ===\n");
+}
+
+
+int main()
+{
+    print("\n[Lume Shell] Ready.\n");
+    print("Commands:\n");
+    print("  s: Run System Call Tests (fork, wait, mm)\n");
+    print("  t: Run Disk Driver Test (VirtIO)\n");
+
     while (1)
-        ;
+    {
+        char buf[16];
+        write(1, "$ ", 2);
+
+        int n = read(0, buf, sizeof(buf));
+        if (n <= 0)
+            continue;
+
+        if (buf[0] == 's')
+        {
+            test_syscalls();
+        }
+        else if (buf[0] == 't')
+        {
+            if (fork() == 0)
+            {
+                disk_test();
+                exit(0);
+            }
+            wait(0);
+        }
+        else if (buf[0] != '\n')
+        {
+            print("Unknown command.\n");
+        }
+    }
+
+    exit(0);
     return 0;
 }

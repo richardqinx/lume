@@ -1,60 +1,59 @@
 #include "common/types.h"
 #include "kernel/riscv.h"
 #include "drivers/plic.h"
+#include "drivers/uart.h"
 
-// QEMU Virt PLIC address constants
+// Base Constants
 constexpr uint64 PLIC_BASE = 0x0c000000L;
 constexpr uint64 PLIC_PRIORITY = PLIC_BASE + 0x0;
 constexpr uint64 PLIC_PENDING = PLIC_BASE + 0x1000;
 
-// S-Mode interrupt enable register: each Hart occupies 0x100 bytes
-// Context 1 is Hart 0 S-Mode, Context 3 is Hart 1 S-Mode...
-inline uint64 PLIC_SENABLE(int hart)
+// Helper Macros to calculate addresses
+#define PLIC_SENABLE_ADDR(hart) (PLIC_BASE + 0x2080 + (hart) * 0x100)
+#define PLIC_STHRESHOLD_ADDR(hart) (PLIC_BASE + 0x201000 + (hart) * 0x2000)
+#define PLIC_SCLAIM_ADDR(hart) (PLIC_BASE + 0x201004 + (hart) * 0x2000)
+
+// Helper for Volatile Access
+static inline volatile uint32 *REG32(uint64 addr)
 {
-    return PLIC_BASE + 0x2080 + static_cast<uint64>(hart) * 0x100;
+    return reinterpret_cast<volatile uint32 *>(addr);
 }
 
-// S-Mode priority threshold and claim register: 0x2000 bytes per Hart
-inline uint64 PLIC_STHRESHOLD(int hart)
-{
-    return PLIC_BASE + 0x201000 + static_cast<uint64>(hart) * 0x2000;
-}
-
-inline uint64 PLIC_SCLAIM(int hart)
-{
-    return PLIC_BASE + 0x201004 + static_cast<uint64>(hart) * 0x2000;
-}
-
-namespace PILC
+namespace PLIC
 {
     void init()
     {
-        *reinterpret_cast<uint32 *>(PLIC_PRIORITY + 10 * 4) = 1; // UART
-        *reinterpret_cast<uint32 *>(PLIC_PRIORITY + 1 * 4) = 1; // VirtIO 0
+        // Set Priority for UART (IRQ 10) and VirtIO (IRQ 1)
+        // Must use volatile write
+        *REG32(PLIC_PRIORITY + 10 * 4) = 1;
+        for (int i = 1; i <= 8; i++)
+        {
+            *REG32(PLIC_PRIORITY + i * 4) = 1;
+        }
     }
 
     void inithart()
     {
-        int hart = static_cast<int>(r_tp()); // 获取当前 hartid
+        int hart = static_cast<int>(r_tp());
 
-        // Enable UART and VirtIO interrupts for the current Hart's S-Mode
-        // Set bit 10 and bit 1 in the register bitmap
-        *reinterpret_cast<uint32 *>(PLIC_SENABLE(hart)) = (1 << 10) | (1 << 1);
+        // Enable UART(10) and VirtIO(1) for this Hart (S-Mode)
+        *REG32(PLIC_SENABLE_ADDR(hart)) = (1 << 10) | 0x1FE;
 
-        // Set the current Hart's S-Mode priority threshold to 0
-        // Only interrupts with a priority higher than this threshold will be delivered
-        *reinterpret_cast<uint32 *>(PLIC_STHRESHOLD(hart)) = 0;
+        // Set Priority Threshold to 0 (Allow all)
+        *REG32(PLIC_STHRESHOLD_ADDR(hart)) = 0;
+
+        Drivers::uart_puts("[PLIC] Hart Init Done.\n");
     }
 
     int claim()
     {
         int hart = static_cast<int>(r_tp());
-        return *reinterpret_cast<uint32 *>(PLIC_SCLAIM(hart));
+        return *REG32(PLIC_SCLAIM_ADDR(hart));
     }
 
     void complete(int irq)
     {
         int hart = static_cast<int>(r_tp());
-        *reinterpret_cast<uint32 *>(PLIC_SCLAIM(hart)) = static_cast<uint32>(irq);
+        *REG32(PLIC_SCLAIM_ADDR(hart)) = static_cast<uint32>(irq);
     }
-} // namespace PILC
+}

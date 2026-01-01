@@ -22,6 +22,7 @@
 #define SYS_link    20
 #define SYS_mkdir   21
 #define SYS_close   22
+#define SYS_disk_test 23
 
 #ifndef __ASSEMBLER__
 void syscall();

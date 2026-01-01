@@ -6,6 +6,7 @@
 #include "kernel/mm.h"
 #include "kernel/timer.h"
 #include "drivers/plic.h"
+#include "drivers/virtio.h"
 #include "lib/string.h"
 
 
@@ -59,20 +60,24 @@ namespace Trap
         if (is_interrupt && code == 9)
         {
             // Supervisor External Interrupt (IRQ 9)
-            int irq = PILC::claim();
+            int irq = PLIC::claim();
 
             if (irq == 10)
             {
-                // uart_intr();
+                Drivers::uart_intr();
+                // Debug
+                // Drivers::uart_puts("[Interrupt] UART Input detected!\n");
             }
             else if (irq >= 1 && irq <= 8)
             {
-                // virtio_disk_intr();
+                VirtIO::intr();
+                // Debug
+                // Drivers::uart_puts("[Interrupt] VirtIO disk finished!\n");
             }
 
             if (irq > 0)
             {
-                PILC::complete(irq);
+                PLIC::complete(irq);
             }
 
             return 1;

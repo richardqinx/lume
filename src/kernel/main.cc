@@ -1,6 +1,8 @@
 #include "common/types.h"
 #include "kernel/riscv.h"
 #include "drivers/uart.h"
+#include "drivers/plic.h"
+#include "drivers/virtio.h"
 #include "kernel/pmm.h"
 #include "kernel/mm.h"
 #include "kernel/proc.h"
@@ -8,7 +10,6 @@
 #include "kernel/timer.h"
 #include "kernel/cpu.h"
 
-// 引用外部 FDT 初始化函数
 extern void fdt_init(uint64 dtb);
 extern uint64 g_dtb_addr;
 
@@ -30,6 +31,9 @@ extern "C" void kernel_main(uint64 hartid, uint64 dtb)
         VM::kvminithart();        // Enable MMU
         Trap::init();             // Trap Management
         Trap::inithart();
+        PLIC::init();
+        PLIC::inithart();
+        VirtIO::init();
         Timer::init();
         ProcManager::init();      // Process Management
         ProcManager::user_init(); // Initialize first user process
@@ -45,6 +49,7 @@ extern "C" void kernel_main(uint64 hartid, uint64 dtb)
 
         VM::kvminithart();
         Trap::inithart();
+        PLIC::inithart();
         Timer::init();
         Drivers::uart_puts("[Boot] Hart started.\n");
     }

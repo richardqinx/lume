@@ -19,6 +19,7 @@ struct SlabHeader
     uint16 used_count;       // Number of allocated objects
     // Followed immediately by object data...
     // The free list of objects is embedded in the first 2 bytes of the object itself (stores the index of the next object)
+    uint32 padding;
 };
 
 struct KmemCache
@@ -82,6 +83,7 @@ namespace Slab
         slab->next = nullptr;
         slab->used_count = 0;
         slab->free_idx = 0;
+        slab->padding = 0;
 
         // Initialize the free list of objects
         // The starting position of each object stores the index of the next object
@@ -186,7 +188,7 @@ namespace Slab
         if (!page)
             return;
 
-        if (!(page->flags & PG_slab))
+        if (!page || !(page->flags & PG_slab))
         {
             PMM::free_pages(ptr, page->order);
             return;
@@ -203,6 +205,13 @@ namespace Slab
         c->lock.acquire();
 
         struct SlabHeader *slab = (struct SlabHeader *)PGROUNDDOWN((uint64)ptr);
+
+        if ((uint64)ptr < (uint64)(slab + 1) || (uint64)ptr >= (uint64)slab + PGSIZE)
+        {
+            Drivers::uart_puts("Slab: kfree invalid pointer\n");
+            c->lock.release();
+            return;
+        }
 
         char *base = (char *)(slab + 1);
         int obj_idx = ((uint64)ptr - (uint64)base) / c->obj_size;

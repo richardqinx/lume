@@ -471,7 +471,6 @@ namespace ProcManager
 
     int wait(uint64 addr)
     {
-        (void)addr;
 
         struct Proc *np;
         int havekids, pid;
@@ -499,6 +498,11 @@ namespace ProcManager
                         }
 
                         pid = np->pid;
+                        if (addr != 0 && VM::copyout(p->pagetable, addr, (char *)&np->xstate, sizeof(np->xstate)) < 0)
+                        {
+                            proc_mem_lock.release();
+                            return -1;
+                        }
                         freeproc(np);
                         proc_mem_lock.release();
                         return pid;
@@ -509,8 +513,33 @@ namespace ProcManager
 
             if (!havekids || p->state == ZOMBIE)
                 return -1;
-            sleep(p, nullptr);
+            sleep(p, &proc_mem_lock);
         }
+    }
+
+    int growproc(int n)
+    {
+        uint64 sz;
+        struct Proc *p = myproc();
+
+        sz = p->sz;
+
+        if (n > 0)
+        {
+            // Call VM::uvmalloc to allocate memory
+            // Parameters: page table, old size, new size, permissions (PTE_W)
+            if ((sz = VM::uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0)
+            {
+                return -1;
+            }
+        }
+        else if (n < 0)
+        {
+            sz = VM::uvmdealloc(p->pagetable, sz, sz + n);
+        }
+
+        p->sz = sz;
+        return 0;
     }
 
     void create_kernel_thread(void (*func)(), const char *name)

@@ -360,11 +360,10 @@ namespace VM
     {
         kernel_pagetable = uvmcreate();
 
-        kvmmap(0x10000000, 0x10000000, PGSIZE, PTE_R | PTE_W);
+        kvmmap(0x10000000, 0x10000000, 0x10000, PTE_R | PTE_W);
         kvmmap(0x0c000000, 0x0c000000, 0x400000, PTE_R | PTE_W);
         kvmmap(0x02000000, 0x02000000, 0x10000, PTE_R | PTE_W); // CLINT
         kvmmap(KERNBASE, KERNBASE, PHYSTOP - KERNBASE, PTE_R | PTE_W | PTE_X);
-        // kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
     }
 
     void kvminithart()

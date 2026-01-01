@@ -1,4 +1,5 @@
 #include "user/user.h"
+#include "common/fcntl.h"
 
 int strlen(const char *s)
 {
@@ -149,7 +150,40 @@ void test_syscalls()
 
 int main()
 {
-    print("\n[Lume Shell] Ready.\n");
+    print("\n[Lume Shell] Init process started.\n");
+    print("[Test] Opening test.txt...\n");
+    int fd = open("test.txt", O_RDONLY);
+    if (fd < 0)
+    {
+        print("[Test] Open failed (Is test.txt in fs.img?)\n");
+    }
+    else
+    {
+        print("[Test] Open success! fd=");
+        print_int(fd);
+        print("\n");
+
+        char buf[64];
+        int n = read(fd, buf, 63);
+        if (n > 0)
+        {
+            buf[n] = 0;
+            print("[Test] Read content:\n---\n");
+            print(buf);
+            print("\n---\n");
+        }
+        else
+        {
+            print("[Test] Read returned ");
+            print_int(n);
+            print("\n");
+        }
+        close(fd);
+        print("[Test] File closed.\n");
+    }
+
+    
+
     print("Commands:\n");
     print("  s: Run System Call Tests (fork, wait, mm)\n");
     print("  t: Run Disk Driver Test (VirtIO)\n");

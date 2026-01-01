@@ -8,6 +8,8 @@
 #include "kernel/trap.h"
 #include "kernel/riscv.h"
 #include "drivers/uart.h"
+#include "fs/fs.h"
+#include "fs/file.h"
 #include "lib/string.h"
 
 #define NPROC 64
@@ -172,6 +174,9 @@ found:
     p->pid = nextpid++;
     p->priority = 0;
     p->cpu = mycpu();
+    p->cwd = nullptr;
+    for (int i = 0; i < NOFILE; i++)
+        p->ofile[i] = nullptr;
 
     if ((p->tf = (struct Trapframe *)PMM::alloc_page()) == 0)
     {
@@ -206,6 +211,19 @@ static void freeproc(struct Proc *p)
     p->kstack = 0;
     if (p->pagetable)
         VM::uvmfree(p->pagetable, p->sz);
+    for (int i = 0; i < NOFILE; i++)
+    {
+        if (p->ofile[i])
+        {
+            FileTable::close(p->ofile[i]);
+            p->ofile[i] = nullptr;
+        }
+    }
+    if (p->cwd)
+    {
+        VFS::iput(p->cwd);
+        p->cwd = nullptr;
+    }
     p->pagetable = 0;
     p->sz = 0;
     p->pid = 0;
@@ -244,6 +262,19 @@ int fork()
     strcpy(np->name, p->name);
     np->parent = p;
     np->priority = p->priority;
+
+    for (int i = 0; i < NOFILE; i++)
+    {
+        if (p->ofile[i])
+        {
+            np->ofile[i] = FileTable::dup(p->ofile[i]);
+        }
+    }
+
+    if (p->cwd)
+    {
+        np->cwd = VFS::idup(p->cwd);
+    }
 
     proc_mem_lock.release();
 
@@ -393,6 +424,8 @@ namespace ProcManager
         p->tf->sp = stack_va + PGSIZE;
         p->sz = stack_va + PGSIZE;
         strcpy(p->name, "initcode");
+
+        p->cwd = nullptr;
 
         proc_mem_lock.release();
 

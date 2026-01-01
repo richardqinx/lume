@@ -18,6 +18,7 @@ namespace VM
 
     int copyout(uint64 *pagetable, uint64 dstva, char *src, uint64 len);
     int copyin(uint64 *pagetable, char *dst, uint64 srcva, uint64 len);
+    int copyinstr(uint64 *pagetable, char *dst, uint64 srcva, uint64 max);
 
     int handle_cow_fault(uint64 *pagetable, uint64 va);
     int mappages(uint64 *pagetable, uint64 va, uint64 size, uint64 pa, int perm);

@@ -99,4 +99,5 @@ namespace VirtIO
     void intr();
     void rw(int write, uint64 blockno, char *buf);
     void test_rw();
+    void test_bio();
 }

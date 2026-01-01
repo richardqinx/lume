@@ -313,6 +313,53 @@ namespace VM
         return 0;
     }
 
+    int copyinstr(uint64 *pagetable, char *dst, uint64 srcva, uint64 max)
+    {
+        uint64 n, va0, pa0;
+        uint64 *pte;
+        int got_null = 0;
+        uint64 len = 0;
+
+        while (len < max)
+        {
+            va0 = PGROUNDDOWN(srcva);
+            pte = walk(pagetable, va0, 0);
+
+            if (pte == nullptr || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+                return -1;
+
+            pa0 = PTE2PA(*pte);
+
+            n = PGSIZE - (srcva - va0);
+            if (n > max - len)
+                n = max - len;
+
+            char *p = (char *)(pa0 + (srcva - va0));
+            while (n > 0)
+            {
+                if (*p == '\0')
+                {
+                    *dst = '\0';
+                    got_null = 1;
+                    break;
+                }
+                *dst = *p;
+                n--;
+                srcva++;
+                dst++;
+                p++;
+                len++;
+            }
+            if (got_null)
+                break;
+        }
+
+        if (got_null)
+            return 0;
+
+        return -1;
+    }
+
     int handle_cow_fault(uint64 *pagetable, uint64 va)
     {
         if (va >= MAXVA)

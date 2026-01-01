@@ -1,8 +1,11 @@
 #pragma once
 #include "common/types.h"
+#include "common/fcntl.h"
 
 struct cpu;
 struct Trapframe;
+class Inode;
+struct file;
 
 enum ProcState
 {
@@ -50,6 +53,9 @@ struct Proc
     struct Proc *parent;
     void *chan;
     int xstate;
+
+    Inode *cwd;
+    struct file *ofile[NOFILE];
 
     struct Proc *next;
     struct Proc *prev;

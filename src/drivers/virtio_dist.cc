@@ -5,6 +5,7 @@
 #include "lib/string.h"
 #include "drivers/uart.h"
 #include "kernel/proc.h"
+#include "kernel/buf.h"
 
 static uint64 virtio_base = 0x10001000;
 
@@ -334,5 +335,40 @@ namespace VirtIO
         }
 
         PMM::free_page(buf);
+    }
+
+    void test_bio()
+    {
+        Drivers::uart_puts(ANSI_BLUE "[Bio] Starting Buffer Cache Test...\n" ANSI_RESET);
+
+        struct Buf *b = BufferCache::bread(0, 100);
+
+        Drivers::uart_puts("[Bio] Bread block 100 (1st time).\n");
+
+        b->data[0] = 'L';
+        b->data[1] = 'u';
+        b->data[2] = 'm';
+        b->data[3] = 'e';
+        b->data[4] = '\0';
+
+        BufferCache::bwrite(b);
+        Drivers::uart_puts("[Bio] Bwrite block 100.\n");
+
+        BufferCache::brelse(b);
+        Drivers::uart_puts("[Bio] Brelease block 100.\n");
+
+        struct Buf *b2 = BufferCache::bread(0, 100);
+        Drivers::uart_puts("[Bio] Bread block 100 (2nd time).\n");
+
+        if (b2->data[0] == 'L' && b2->data[1] == 'u' && b2->data[3] == 'e')
+        {
+            Drivers::uart_puts(ANSI_GREEN "[Bio] Data verification PASSED.\n" ANSI_RESET);
+        }
+        else
+        {
+            Drivers::uart_puts(ANSI_RED "[Bio] Data verification FAILED.\n" ANSI_RESET);
+        }
+
+        BufferCache::brelse(b2);
     }
 }

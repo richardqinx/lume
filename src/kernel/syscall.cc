@@ -1,5 +1,6 @@
 #include "kernel/syscall.h"
 #include "common/types.h"
+#include "common/fcntl.h"
 #include "kernel/proc.h"
 #include "kernel/riscv.h"
 #include "drivers/uart.h"
@@ -7,6 +8,8 @@
 #include "kernel/timer.h"
 #include "kernel/mm.h"
 #include "kernel/trap.h"
+#include "fs/fat32.h"
+#include "fs/file.h"
 
 extern "C++" int fork();
 
@@ -45,47 +48,126 @@ static int argint(int n, int *ip)
     return 0;
 }
 
+static int argstr(int n, char *buf, int max)
+{
+    uint64 addr = argraw(n);
+    return VM::copyinstr(myproc()->pagetable, buf, addr, max);
+}
 
-static uint64_t sys_exit()
+static int fdalloc(struct file *f)
+{
+    struct Proc *p = myproc();
+    for (int i = 0; i < NOFILE; i++)
+    {
+        if (p->ofile[i] == 0)
+        {
+            p->ofile[i] = f;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static uint64 sys_open()
+{
+    char path[128];
+    int omode;
+    int fd;
+    struct file *f;
+    Inode *ip;
+
+    if (argstr(0, path, 128) < 0 || argint(1, &omode) < 0)
+        return -1;
+
+    ip = VFS::namei(path);
+    if (ip == nullptr)
+    {
+        return -1;
+    }
+
+    f = FileTable::alloc();
+    if (f == nullptr)
+    {
+        VFS::iput(ip);
+        return -1;
+    }
+
+    fd = fdalloc(f);
+    if (fd < 0)
+    {
+        f->ref = 0;
+        f->type = FD_NONE;
+        VFS::iput(ip);
+        return -1;
+    }
+
+    f->type = FD_INODE;
+    f->ip = ip;
+    f->off = 0;
+    f->readable = !(omode & O_WRONLY);
+    f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+
+    return fd;
+}
+
+static uint64 sys_close()
+{
+    int fd;
+    if (argint(0, &fd) < 0)
+        return -1;
+
+    struct Proc *p = myproc();
+    if (fd < 0 || fd >= NOFILE || p->ofile[fd] == 0)
+        return -1;
+
+    FileTable::close(p->ofile[fd]);
+    p->ofile[fd] = 0;
+    return 0;
+}
+
+static uint64 sys_exit()
 {
     int n;
     if (argint(0, &n) < 0)
-        return static_cast<uint64_t>(-1);
+        return static_cast<uint64>(-1);
     ProcManager::exit(n);
     return 0;
 }
 
-static uint64_t sys_fork()
+static uint64 sys_fork()
 {
-    return static_cast<uint64_t>(fork());
+    return static_cast<uint64>(fork());
 }
 
-static uint64_t sys_wait()
+static uint64 sys_wait()
 {
-    uint64_t p = argraw(0);
-    return static_cast<uint64_t>(ProcManager::wait(p));
+    uint64 p = argraw(0);
+    return static_cast<uint64>(ProcManager::wait(p));
 }
 
-static uint64_t sys_getpid()
+static uint64 sys_getpid()
 {
-    return static_cast<uint64_t>(myproc()->pid);
+    return static_cast<uint64>(myproc()->pid);
 }
 
-static uint64_t sys_putc()
+static uint64 sys_putc()
 {
     char c = static_cast<char>(argraw(0));
     Drivers::uart_putc(c);
     return 0;
 }
 
-static uint64_t sys_write()
+static uint64 sys_write()
 {
-    int fd;
+    struct file *f;
     int n;
-    uint64_t p;
+    uint64 p;
+    int fd;
 
-    if (argint(0, &fd) < 0 || argint(2, &n) < 0)
-        return static_cast<uint64_t>(-1);
+    if (argint(0, &fd) < 0 || argint(2, &n) < 0 || argint(1, (int *)&p) < 0)
+        return -1;
+
+    struct Proc *proc = myproc();
 
     p = argraw(1);
 
@@ -95,9 +177,8 @@ static uint64_t sys_write()
     // Drivers::uart_put_int(n);
     // Drivers::uart_puts("\n");
 
-    if (fd == 1) // stdout
+    if (fd == 1 && proc->ofile[fd] == nullptr) // stdout
     {
-        Proc *proc = myproc();
         constexpr int MAX_WRITE_BUF = 128;
         char buf[MAX_WRITE_BUF];
         int i = 0;
@@ -108,10 +189,10 @@ static uint64_t sys_write()
             if (len > MAX_WRITE_BUF)
                 len = MAX_WRITE_BUF;
 
-            if (VM::copyin(proc->pagetable, buf, p + i, static_cast<uint64_t>(len)) < 0)
+            if (VM::copyin(proc->pagetable, buf, p + i, static_cast<uint64>(len)) < 0)
             {
                 Drivers::uart_puts("sys_write: copyin failed\n");
-                return static_cast<uint64_t>(-1);
+                return static_cast<uint64>(-1);
             }
 
             for (int j = 0; j < len; j++)
@@ -120,45 +201,57 @@ static uint64_t sys_write()
             }
             i += len;
         }
-        return static_cast<uint64_t>(n);
+        return static_cast<uint64>(n);
     }
-    return static_cast<uint64_t>(-1);
+    if (fd < 0 || fd >= NOFILE || (f = proc->ofile[fd]) == 0)
+        return static_cast<uint64>(-1);
+
+    return FileTable::write(f, p, n);
 }
 
 static uint64_t sys_read()
 {
-    int fd;
+    struct file *f;
     int n;
-    uint64_t p;
+    uint64 p;
+    int fd;
 
     // get param: fd, buf, len
-    if (argint(0, &fd) < 0 || argint(2, &n) < 0)
+    if (argint(0, &fd) < 0 || argint(2, &n) < 0 || argint(1, (int *)&p) < 0)
         return -1;
-    p = argraw(1);
-
-    if (fd == 0) // stdin
+    
+    struct Proc* proc = myproc();
+    if (fd == 0 && proc->ofile[fd] == nullptr)
     {
         return Drivers::console_read(p, n);
     }
+
+    if (fd < 0 || fd >= NOFILE || (f = proc->ofile[fd]) == 0)
+        return -1;
+
+    return FileTable::read(f, p, n);
+
     return -1;
 }
 
-static uint64_t sys_sbrk()
+static uint64 sys_sbrk()
 {
     int n;
     if (argint(0, &n) < 0)
         return -1;
 
-    uint64_t addr = myproc()->sz;
+    uint64 addr = myproc()->sz;
     if (ProcManager::growproc(n) < 0)
         return -1;
 
     return addr;
 }
 
-static uint64_t sys_disk_test()
+static uint64 sys_disk_test()
 {
-    VirtIO::test_rw();
+    // VirtIO::test_rw();
+    // VirtIO::test_bio();
+    fat32_test();
     return 0;
 }
 
@@ -166,7 +259,7 @@ void syscall()
 {
     Proc *p = myproc();
     int num = p->tf->a7;
-    uint64_t ret = static_cast<uint64_t>(-1);
+    uint64 ret = static_cast<uint64>(-1);
 
     /* Just For Debug */
     // Drivers::uart_puts("Syscall: ");
@@ -175,6 +268,12 @@ void syscall()
 
     switch (num)
     {
+    case SYS_open:
+        ret = sys_open();
+        break;
+    case SYS_close:
+        ret = sys_close();
+        break;
     case SYS_write:
         ret = sys_write();
         break;
@@ -206,7 +305,7 @@ void syscall()
         Drivers::uart_puts("Unknown Syscall ID: ");
         Drivers::print_hex(num);
         Drivers::uart_puts("\n");
-        ret = static_cast<uint64_t>(-1);
+        ret = static_cast<uint64>(-1);
         break;
     }
 

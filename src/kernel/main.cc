@@ -9,6 +9,11 @@
 #include "kernel/trap.h"
 #include "kernel/timer.h"
 #include "kernel/cpu.h"
+#include "kernel/buf.h"
+#include "fs/fs.h"
+#include "fs/file.h"
+#include "fs/fat32.h"
+#include "lib/string.h"
 
 extern void fdt_init(uint64 dtb);
 extern uint64 g_dtb_addr;
@@ -34,6 +39,9 @@ extern "C" void kernel_main(uint64 hartid, uint64 dtb)
         PLIC::init();
         PLIC::inithart();
         VirtIO::init();
+        BufferCache::init();
+        VFS::init();
+        FileTable::init();
         Timer::init();
         ProcManager::init();      // Process Management
         ProcManager::user_init(); // Initialize first user process

@@ -1,34 +1,58 @@
+#include "ulib/stdio.h"
+#include "ulib/stdlib.h"
+#include "ulib/string.h"
 #include "user/user.h"
-
-int main();
-
-extern "C" void _start()
-{
-    exit(main());
-}
 
 int main()
 {
-    int pid = fork();
+    char *argv[] = {(char *)"sh", 0};
 
-    if (pid < 0)
-    {
-        write(1, "Fork failed\n", 12);
-        exit(1);
-    }
+    printf("[Init] Starting Lume OS Shell...\n");
 
-    if (pid == 0)
+    while (1)
     {
-        write(1, "Hello from Child!\n", 18);
-        exit(0);
-    }
-    else
-    {
-        write(1, "Parent waiting...\n", 18);
-        wait(0);
-        write(1, "Parent: Child exited.\n", 22);
-    }
+        // printf("fork start\n");
+        int pid = fork();
+        // printf("fork suceess, pid=%i\n", pid);
+        
+        if (pid < 0)
+        {
+            printf("[Init] fork failed!\n");
+            exit(1);
+        }
 
-    while (1);
+        if (pid == 0)
+        {
+            
+            char sh_path[] = "/sh";
+            exec(sh_path, argv);
+
+            printf("[Init] exec sh failed\n");
+            return 0;
+            exit(1);
+        }
+        else
+        {
+            // break;
+            int status;
+            int wpid;
+            while (1)
+            {
+                wpid = wait((uint64)&status);
+
+                if (wpid == pid)
+                {
+                    printf("Shell Exit");
+                    break;
+                }
+                if (wpid < 0)
+                {
+                    printf("[Init] wait error or no child\n");
+
+                    break;
+                }
+            }
+        }
+    }
     return 0;
 }

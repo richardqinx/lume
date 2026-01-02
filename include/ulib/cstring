@@ -1,0 +1,32 @@
+#ifndef _CPP_CSTRING
+#define _CPP_CSTRING
+
+#include "string.h"
+
+namespace std
+{
+    using::memchr;
+    using::memcmp;
+    using::memcpy;
+    using::memmove;
+    using::memset;
+    using::strcat;
+    using::strchr;
+    using::strcmp;
+    using::strcpy;
+    using::strcspn;
+    using::strdup;
+    using::strerror;
+    using::strlcat;
+    using::strlcpy;
+    using::strlen;
+    using::strncat;
+    using::strncmp;
+    using::strpbrk;
+    using::strrchr;
+    using::strspn;
+    using::strstr;
+    using::strtok;
+} // namespace std
+
+#endif

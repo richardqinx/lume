@@ -1,20 +1,48 @@
 #pragma once
 #include "common/types.h"
 
-struct spinlock
-{
-    uint locked;
+struct cpu;
 
-    char *name;
-    int cpu_id;
+// Spinlock
+// Features: Non-interruptible, busy-wait loop, extremely short hold time.
+// Scenario: Protecting core data such as scheduler, interrupt handling, PMM, etc.
+class Spinlock
+{
+public:
+    volatile uint32 locked;     // Whether it is locked (0: unlocked, 1: locked)
+    const char *name;      // Lock Name (for debugging)
+    struct cpu *cpu; // The CPU holding the lock
+
+    // Constructor
+    Spinlock() : locked(0), name("uninit"), cpu(nullptr) {}
+
+    // Initialize lock name
+    void init(const char *name);
+
+    // Acquire lock
+    void acquire();
+
+    // Release lock
+    void release();
+
+    // Check if the current CPU holds the lock
+    bool holding();
 };
 
-namespace Spinlock
+// Mutex
+// Features: Allows interruption, allows sleeping (yield CPU), can hold for a long time.
+// Scenarios: File system IO, device driver waiting, long-term buffering operations.
+class Mutex
 {
-    void init(struct spinlock *lk, char *name);
-    void acquire(struct spinlock *lk);
-    void release(struct spinlock *lk);
-    int holding(struct spinlock *lk);
-    void push_off();
-    void pop_off();
-}
+public:
+    uint32 locked;    // Whether it is locked
+    const char *name; // Lock Name
+    int pid;          // PID of the process holding the lock (for debugging)
+
+    Spinlock lk; // Internal spin lock, protects the state of the Mutex itself
+
+    void init(const char *name);
+    void acquire();
+    void release();
+    bool holding();
+};

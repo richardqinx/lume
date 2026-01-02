@@ -69,3 +69,16 @@ int strcmp(const char *s1, const char *s2)
     }
     return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
+
+int strcasecmp(const char *s1, const char *s2)
+{
+    while (*s1)
+    {
+        if(*s1 == *s2 || *s1 + 32 == *s2 || *s1 == *s2 + 32){
+            s1++;
+            s2++;
+        }
+        else break;
+    }
+    return *(const unsigned char *)s1 - *(const unsigned char *)s2;
+}

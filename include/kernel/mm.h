@@ -3,20 +3,25 @@
 
 namespace VM
 {
-    typedef uint64_t *pagetable_t;
-    typedef uint64_t pte_t;
+    extern uint64 *kernel_pagetable;
 
-    pte_t *walk(pagetable_t pagetable, uint64 va, int alloc);
-    int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm);
-    void kvmmap(uint64 va, uint64 pa, uint64 sz, int perm);
     void kvminit();
     void kvminithart();
-    pagetable_t uvmcreate();
-    void uvminit(pagetable_t pagetable, uchar *src, uint sz);
-    void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free);
-    void uvmfree(pagetable_t pagetable, uint64 sz);
-    int uvmcopy(pagetable_t oldpt, pagetable_t newpt, uint64 sz);
-    uint64 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz);
-    uint64 uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz);
-    int copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len);
+
+    uint64 *uvmcreate();
+    void uvminit(uint64 *pagetable, uchar *src, uint64 sz);
+    uint64 uvmalloc(uint64 *pagetable, uint64 oldsz, uint64 newsz, int xperm);
+    uint64 uvmdealloc(uint64 *pagetable, uint64 oldsz, uint64 newsz);
+    void uvmfree(uint64 *pagetable, uint64 sz);
+    int uvmcopy(uint64 *oldpt, uint64 *newpt, uint64 sz);
+    void uvmunmap(uint64 *pagetable, uint64 va, uint64 npages, int do_free);
+
+    int copyout(uint64 *pagetable, uint64 dstva, char *src, uint64 len);
+    int copyin(uint64 *pagetable, char *dst, uint64 srcva, uint64 len);
+    int copyinstr(uint64 *pagetable, char *dst, uint64 srcva, uint64 max);
+
+    int handle_cow_fault(uint64 *pagetable, uint64 va);
+    int mappages(uint64 *pagetable, uint64 va, uint64 size, uint64 pa, int perm);
+
+    uint64 walkaddr(uint64 *pagetable, uint64 va);
 }

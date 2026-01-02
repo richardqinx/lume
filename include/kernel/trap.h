@@ -45,7 +45,6 @@ struct Trapframe
 namespace Trap
 {
     void init();
-    extern "C" void kernelvec();
-    extern "C" void kerneltrap(struct Trapframe *tf);
+    void inithart();
+    int devintr();
 }
-extern "C" void usertrap();

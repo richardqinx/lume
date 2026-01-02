@@ -1,0 +1,110 @@
+#ifndef _IOSTREAM
+#define _IOSTREAM
+
+#include "stdio.h"
+
+namespace std
+{
+    class ostream
+    {
+    private:
+        FILE* _stream;
+    public:
+        ostream(FILE* f) : _stream(f) {}
+
+        ostream& operator<<(const char* str)
+        {
+            fprintf(_stream, "%s", str);
+            return *this;
+        }
+
+        ostream& operator<<(int n)
+        {
+            fprintf(_stream, "%d", n);
+            return *this;
+        }
+
+        ostream &operator<<(long n)
+        {
+            fprintf(_stream, "%ld", n);
+            return *this;
+        }
+
+        ostream &operator<<(long long n)
+        {
+            fprintf(_stream, "%lld", n);
+            return *this;
+        }
+
+        ostream &operator<<(double f)
+        {
+            fprintf(_stream, "%f", f);
+            return *this;
+        }
+
+        ostream &operator<<(char c)
+        {
+            fputc(c, _stream);
+            return *this;
+        }
+
+        ostream &operator<<(void *p)
+        {
+            fprintf(_stream, "%p", p);
+            return *this;
+        }
+
+        ostream &operator<<(ostream &(*func)(ostream &))
+        {
+            return func(*this);
+        }
+
+        ostream &flush()
+        {
+            fflush(_stream);
+            return *this;
+        }
+    };
+
+    class istream{
+    private:
+        FILE* _stream;
+    public:
+        istream(FILE *f) : _stream(f) {}
+
+        istream& operator>>(int n)
+        {
+            fscanf(_stream, "%d", n);
+            return *this;
+        }
+
+        istream &operator>>(double &f)
+        {
+            fscanf(_stream, "%lf", &f);
+            return *this;
+        }
+
+        istream &operator>>(char *str)
+        {
+            fscanf(_stream, "%s", str);
+            return *this;
+        }
+
+        istream &operator>>(char &c)
+        {
+            char tmp[2];
+            fscanf(_stream, " %c", tmp);
+            c = tmp[0];
+            return *this;
+        }
+    };
+
+    inline ostream &endl(ostream &os)
+    {
+        os << '\n';
+        os.flush();
+        return os;
+    }
+}
+
+#endif

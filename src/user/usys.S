@@ -7,8 +7,16 @@
         ecall; \
         ret
 
+#define SYSCALL_NAME(name, sysname) \
+    .global name; \
+    name: \
+        li a7, SYS_ ## sysname; \
+        ecall; \
+        ret
+
+SYSCALL_NAME(sys_exit, exit) 
+
 SYSCALL(fork)
-SYSCALL(exit)
 SYSCALL(wait)
 SYSCALL(pipe)
 SYSCALL(read)
@@ -29,3 +37,5 @@ SYSCALL(sbrk)
 SYSCALL(sleep)
 SYSCALL(uptime)
 SYSCALL(putc)
+SYSCALL(disk_test)
+SYSCALL(lseek)

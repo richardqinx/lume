@@ -1,13 +1,18 @@
 #include "kernel/trap.h"
-#include "common/types.h"
-#include "drivers/uart.h"
-#include "kernel/proc.h"
-#include "kernel/timer.h"
-#include "kernel/syscall.h"
 #include "kernel/riscv.h"
+#include "kernel/proc.h"
+#include "drivers/uart.h"
+#include "kernel/syscall.h"
+#include "kernel/mm.h"
+#include "kernel/timer.h"
+#include "drivers/plic.h"
+#include "drivers/virtio.h"
+#include "lib/string.h"
 
-extern void usertrapret();
-extern void forkret();
+
+extern "C" void kernelvec();
+
+// Handle Function
 
 void panic(const char *s)
 {
@@ -18,160 +23,183 @@ void panic(const char *s)
         ;
 }
 
+// Trap Implementation
+
 namespace Trap
 {
     void init()
     {
-        uint64 stvec_val = (uint64)kernelvec;
-        asm volatile("csrw stvec, %0" : : "r"(stvec_val));
-
-        uint64 sstatus;
-        asm volatile("csrr %0, sstatus" : "=r"(sstatus));
-        sstatus &= ~(1L << 1);
-        asm volatile("csrw sstatus, %0" : : "r"(sstatus));
-
-        Drivers::uart_puts("[Trap] Initialized stvec to: ");
-        Drivers::print_hex(stvec_val);
-        Drivers::uart_puts("\n");
+        Drivers::uart_puts("[Trap] Global init done.\n");
     }
 
-    extern "C" void kerneltrap(struct Trapframe *tf)
+    // Each CPU core needs to call this function when starting to set its own stvec
+    void inithart()
     {
-        uint64 scause, stval, sepc;
+        w_stvec((uint64)kernelvec);
 
-        asm volatile("csrr %0, scause" : "=r"(scause));
-        asm volatile("csrr %0, stval" : "=r"(stval));
-        asm volatile("csrr %0, sepc" : "=r"(sepc));
+        // Ensure that the S-Mode interrupt enable bit (SIE) is cleared during initialization
+        // Interrupt enabling will be done by the scheduler when the first process runs
+        w_sstatus(r_sstatus() & ~SSTATUS_SIE);
 
-        if (scause & (1L << 63))
-        {
-            uint64 cause_code = scause & 0x7FFFFFFFFFFFFFFFL;
-            switch (cause_code)
-            {
-            case 1:
-                Drivers::uart_puts("[IRQ] Software Interrupt (Unexpected)\n");
-                break;
+        // Enable the external interrupt, clock interrupt, and software interrupt bits in S-Mode (in SIE register)
+        uint64 sie = r_sie();
+        sie |= SIE_SEIE | SIE_STIE | SIE_SSIE;
+        w_sie(sie);
 
-            case 5:
-                Drivers::uart_puts("[IRQ] Timer Interrupt\n");
-                Timer::set_next_trigger();
-                ProcManager::yield();
-                break;
-            
-            case 9:
-                Drivers::uart_puts("[IRQ] External Interrupt\n");
-                break;
-
-            default:
-                Drivers::uart_puts("[IRQ] Unknown Interrupt: ");
-                Drivers::print_hex(cause_code);
-                Drivers::uart_puts("\n");
-                break;
-            }
-        }
-        else
-        {
-            switch (scause)
-            {
-            case 8:
-                Drivers::uart_puts("[Syscall] ecall from Kernel Mode? Panic.\n");
-                panic("Kernel Ecall");
-                break;
-
-            case 12:
-            case 13:
-            case 15:
-                Drivers::uart_puts("\n--- PAGE FAULT ---\n");
-                Drivers::uart_puts("Cause Code: ");
-                Drivers::print_hex(scause);
-                Drivers::uart_puts("\n");
-                Drivers::uart_puts("Fault Addr (stval): ");
-                Drivers::print_hex(stval);
-                Drivers::uart_puts("\n");
-                Drivers::uart_puts("Instruction (sepc): ");
-                Drivers::print_hex(sepc);
-                Drivers::uart_puts("\n");
-
-                if (stval == 0)
-                {
-                    panic("Null Pointer Dereference!");
-                }
-                else if (stval < 0x80000000)
-                {
-                    panic("Invalid Low Memory Access!");
-                }
-                else
-                {
-                    panic("Segmentation Fault (Unmapped Area)");
-                }
-                break;
-
-            case 2:
-                Drivers::uart_puts("\n--- ILLEGAL INSTRUCTION ---\n");
-                Drivers::uart_puts("Instruction (sepc): ");
-                Drivers::print_hex(sepc);
-                Drivers::uart_puts("\n");
-                panic("CPU encountered an unknown opcode");
-                break;
-
-            default:
-                Drivers::uart_puts("\n--- UNHANDLED EXCEPTION ---\n");
-                Drivers::uart_puts("Cause: ");
-                Drivers::print_hex(scause);
-                Drivers::uart_puts("\n");
-                Drivers::uart_puts("sepc: ");
-                Drivers::print_hex(sepc);
-                Drivers::uart_puts("\n");
-                panic("System Halt");
-                break;
-            }
-        }
+        Drivers::uart_puts("[Trap] Hart initialized (stvec set).\n");
     }
+
+    // Device Interrupt Check
+    int devintr()
+    {
+        uint64 scause = r_scause();
+
+        bool is_interrupt = (scause & 0x8000000000000000L) != 0;
+        uint64 code = scause & 0xff;
+
+        if (is_interrupt && code == 9)
+        {
+            // Supervisor External Interrupt (IRQ 9)
+            int irq = PLIC::claim();
+
+            if (irq == 10)
+            {
+                Drivers::uart_intr();
+                // Debug
+                // Drivers::uart_puts("[Interrupt] UART Input detected!\n");
+            }
+            else if (irq >= 1 && irq <= 8)
+            {
+                VirtIO::intr();
+                // Debug
+                // Drivers::uart_puts("[Interrupt] VirtIO disk finished!\n");
+            }
+
+            if (irq > 0)
+            {
+                PLIC::complete(irq);
+            }
+
+            return 1;
+        }
+        else if (is_interrupt && code == 5)
+        {
+            // Supervisor Timer Interrupt (IRQ 5)
+            Timer::set_next_trigger();
+            // w_sip(r_sip() & ~2);
+            return 2;
+        }
+
+        return 0;
+    }
+}
+
+// Exception Handling Entry
+
+extern "C" void kerneltrap(struct Trapframe *tf)
+{
+    uint64 sepc = r_sepc();
+    uint64 sstatus = r_sstatus();
+    uint64 scause = r_scause();
+
+    if ((sstatus & SSTATUS_SPP) == 0)
+        panic("kerneltrap: not from supervisor mode");
+
+    if (intr_get() != 0)
+        panic("kerneltrap: interrupts enabled");
+
+    if (Trap::devintr() == 0)
+    {
+        Drivers::uart_puts("\n--- KERNEL EXCEPTION ---\n");
+        Drivers::uart_puts("scause: ");
+        Drivers::print_hex(scause);
+        Drivers::uart_puts("\n");
+        Drivers::uart_puts("sepc:   ");
+        Drivers::print_hex(sepc);
+        Drivers::uart_puts("\n");
+        Drivers::uart_puts("stval:  ");
+        Drivers::print_hex(r_stval());
+        Drivers::uart_puts("\n");
+        panic("kerneltrap exception");
+    }
+
+    w_sepc(sepc);
+    w_sstatus(sstatus);
 }
 
 extern "C" void usertrap()
 {
-    asm volatile("csrw stvec, %0" : : "r"(Trap::kernelvec));
+    // Drivers::uart_puts("[Debug] Entered usertrap!\n");
+    int which_dev = 0;
 
-    uint64 scause;
-    asm volatile("csrr %0, scause" : "=r"(scause));
+    if ((r_sstatus() & SSTATUS_SPP) != 0)
+        panic("usertrap: not from user mode");
+
+    w_stvec((uint64)kernelvec);
 
     struct Proc *p = myproc();
-    
-    extern struct Proc procs[];
     if (!p)
-    {
-        for (int i = 0; i < 10; ++i)
-            if (procs[i].state == RUNNING)
-                p = &procs[i];
-    }
+        panic("usertrap: no process");
 
-    uint64 sepc;
-    asm volatile("csrr %0, sepc" : "=r"(sepc));
-    p->tf->epc = sepc;
+    p->tf->epc = r_sepc();
 
-    if(scause == 8)
+    uint64 scause = r_scause();
+    uint64 stval = r_stval();
+
+    if (scause == 8) // Syscall
     {
-        intr_on();
+        if (p->state == ZOMBIE)
+            ProcManager::exit(-1);
         p->tf->epc += 4;
-
+        intr_on();
         syscall();
-
         intr_off();
     }
-    else if ((scause & (1L << 63)) && (scause & 0xF) == 5)
+    else if (scause == 15) // Store Page Fault
     {
-        Drivers::uart_puts("\nTick\n");
-        Timer::set_next_trigger();
-        ProcManager::yield();
+        if (VM::handle_cow_fault(p->pagetable, PGROUNDDOWN(stval)) != 0)
+        {
+            uint64 pa = VM::walkaddr(p->pagetable, stval);
+
+            if (pa == 0)
+            {
+                Drivers::uart_puts("usertrap: Segmentation Fault (unmapped) at ");
+            }
+            else
+            {
+                Drivers::uart_puts("usertrap: Protection Fault (or OOM) at ");
+            }
+
+            Drivers::print_hex(stval);
+            Drivers::uart_puts("\n");
+            p->state = ZOMBIE;
+            ProcManager::exit(-1);
+        }
+    }
+    else if ((which_dev = Trap::devintr()) != 0)
+    {
+        if (which_dev == 2)
+        {
+            ProcManager::yield();
+        }
     }
     else
     {
-        Drivers::uart_puts("Unexpected User Trap!\n");
+        Drivers::uart_puts("\nusertrap(): unexpected scause ");
         Drivers::print_hex(scause);
-        while (1)
-            ;
+        Drivers::uart_puts(" pid=");
+        Drivers::uart_put_int(p->pid);
+        Drivers::uart_puts(" sepc=");
+        Drivers::print_hex(p->tf->epc);
+        Drivers::uart_puts(" stval=");
+        Drivers::print_hex(stval);
+        Drivers::uart_puts("\n");
+        p->state = ZOMBIE;
+        ProcManager::exit(-1);
     }
+
+    if (p->state == ZOMBIE)
+        ProcManager::exit(-1);
 
     usertrapret();
 }

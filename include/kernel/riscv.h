@@ -79,6 +79,7 @@ w_sip(uint64 x)
 // Supervisor Interrupt Enable
 #define SIE_SEIE (1L << 9) // external
 #define SIE_STIE (1L << 5) // timer
+#define SIE_SSIE (1L << 1) // software
 static inline uint64
 r_sie()
 {
@@ -375,7 +376,8 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // user can access
 
-
+// COW Flag (PTE bit 8)
+#define PTE_COW (1L << 8)
 
 #if defined(LAB_MMAP) || defined(LAB_PGTBL) || defined(LAB_COW)
 #define PTE_LEAF(pte) (((pte) & PTE_R) | ((pte) & PTE_W) | ((pte) & PTE_X))

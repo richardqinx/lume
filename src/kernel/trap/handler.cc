@@ -157,6 +157,12 @@ extern "C" void usertrap()
     }
     else if (scause == 15) // Store Page Fault
     {
+        uint64 pte = VM::walkaddr(p->pagetable, stval);
+
+        // Drivers::uart_puts("[Debug] Faulting PTE:");
+        // Drivers::print_hex(pte);
+        // Drivers::uart_puts("\n");
+
         if (VM::handle_cow_fault(p->pagetable, PGROUNDDOWN(stval)) != 0)
         {
             Drivers::uart_puts("usertrap: cow failed at ");

@@ -32,4 +32,5 @@ namespace FileTable
     int stat(struct file *f, uint64 addr);
     int read(struct file *f, uint64 addr, int n);
     int write(struct file *f, uint64 addr, int n);
+    int lseek(struct file *f, int offset, int whence);
 } // namespace FileTable

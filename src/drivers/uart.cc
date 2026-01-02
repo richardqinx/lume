@@ -183,7 +183,7 @@ namespace Drivers
             }
 
             // Echo back to user
-            uart_putc(c);
+            // uart_putc(c);
 
             if (VM::copyout(p->pagetable, target + target_idx, &c, 1) < 0)
             {

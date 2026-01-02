@@ -111,8 +111,10 @@ namespace VFS
         ip->lock.release();
     }
 
-    static void iunlockput(Inode *ip)
+    void iunlockput(Inode *ip)
     {
+        if (!ip)
+            return;
         iunlock(ip);
         iput(ip);
     }

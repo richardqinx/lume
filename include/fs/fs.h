@@ -83,6 +83,7 @@ namespace VFS
     void ilock(Inode *ip);
     // unlock
     void iunlock(Inode *ip);
+    void iunlockput(Inode *ip);
     // Mount the root filesystem
     void mount_root(Inode *root);
     // Get system root node

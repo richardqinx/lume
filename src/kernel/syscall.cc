@@ -8,10 +8,16 @@
 #include "kernel/timer.h"
 #include "kernel/mm.h"
 #include "kernel/trap.h"
+#include "kernel/slab.h"
 #include "fs/fat32.h"
 #include "fs/file.h"
+#include "lib/string.h"
 
 extern "C++" int fork();
+namespace Exec
+{
+    int exec(char *path, char **argv);
+}   
 
 namespace ProcManager
 {
@@ -53,6 +59,34 @@ static int argstr(int n, char *buf, int max)
     uint64 addr = argraw(n);
     return VM::copyinstr(myproc()->pagetable, buf, addr, max);
 }
+
+struct KernelArgv
+{
+    static const int MAX_ARGS = 32;
+    static const int MAX_ARG_LEN = 128;
+
+    char *args[MAX_ARGS];
+
+    KernelArgv()
+    {
+        memset(args, 0, sizeof(args));
+    }
+
+    ~KernelArgv()
+    {
+        for (int i = 0; i < MAX_ARGS; i++)
+        {
+            if (args[i])
+            {
+                Slab::kfree(args[i]);
+                args[i] = nullptr;
+            }
+        }
+    }
+
+    KernelArgv(const KernelArgv &) = delete;
+    KernelArgv &operator=(const KernelArgv &) = delete;
+};
 
 static int fdalloc(struct file *f)
 {
@@ -123,6 +157,53 @@ static uint64 sys_close()
     FileTable::close(p->ofile[fd]);
     p->ofile[fd] = 0;
     return 0;
+}
+
+static uint64 sys_exec()
+{
+    char path[128];
+    uint64 uargv_ptr;
+
+    if (argstr(0, path, sizeof(path)) < 0)
+    {
+        return -1;
+    }
+
+    if (argint(1, (int *)&uargv_ptr) < 0)
+    {
+        return -1;
+    }
+
+    KernelArgv kargv;
+
+    for (int i = 0; i < KernelArgv::MAX_ARGS; ++i)
+    {
+        uint64 uarg_str_ptr;
+
+        if (VM::copyin(myproc()->pagetable, (char *)&uarg_str_ptr, uargv_ptr + i * sizeof(uint64), sizeof(uint64)) < 0)
+        {
+            return -1;
+        }
+
+        if (uarg_str_ptr == 0)
+        {
+            kargv.args[i] = nullptr;
+            break;
+        }
+
+        kargv.args[i] = (char *)Slab::kmalloc(KernelArgv::MAX_ARG_LEN);
+        if (kargv.args[i] == nullptr)
+        {
+            return -1;
+        }
+
+        if (VM::copyinstr(myproc()->pagetable, kargv.args[i], uarg_str_ptr, KernelArgv::MAX_ARG_LEN) < 0)
+        {
+            return -1;
+        }
+    }
+
+    return Exec::exec(path, kargv.args);
 }
 
 static uint64 sys_exit()
@@ -255,6 +336,19 @@ static uint64 sys_disk_test()
     return 0;
 }
 
+static uint64 sys_lseek()
+{
+    int fd, offset, whence;
+    if (argint(0, &fd) < 0 || argint(1, &offset) < 0 || argint(2, &whence) < 0)
+        return -1;
+
+    struct Proc *p = myproc();
+    if (fd < 0 || fd >= NOFILE || p->ofile[fd] == 0)
+        return -1;
+
+    return FileTable::lseek(p->ofile[fd], offset, whence);
+}
+
 void syscall()
 {
     Proc *p = myproc();
@@ -286,6 +380,13 @@ void syscall()
     case SYS_fork:
         ret = sys_fork();
         break;
+    case SYS_exec:
+        ret = sys_exec();
+        if (ret != static_cast<uint64>(-1))
+        {
+            return;
+        }
+        break;
     case SYS_exit:
         ret = sys_exit();
         break;
@@ -300,6 +401,20 @@ void syscall()
         break;
     case SYS_disk_test:
         ret = sys_disk_test();
+        break;
+    case SYS_lseek:
+        ret = sys_lseek();
+        break;
+    case SYS_pipe:
+    case SYS_dup:
+    case SYS_chdir:
+    case SYS_fstat:
+    case SYS_mkdir:
+    case SYS_mknod:
+    case SYS_unlink:
+    case SYS_link:
+        Drivers::uart_puts("Unimplemented syscall\n");
+        ret = static_cast<uint64>(-1);
         break;
     default:
         Drivers::uart_puts("Unknown Syscall ID: ");

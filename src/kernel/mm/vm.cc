@@ -261,6 +261,8 @@ namespace VM
         return 0;
     }
 
+    int handle_cow_fault(uint64 *pagetable, uint64 va);
+
     int copyout(uint64 *pagetable, uint64 dstva, char *src, uint64 len)
     {
         uint64 n, va0, pa0;
@@ -272,6 +274,17 @@ namespace VM
             pte = walk(pagetable, va0, 0);
             if (pte == nullptr || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
                 return -1;
+
+            // Note: Maybe a bug
+            if (*pte & PTE_COW)
+            {
+                if (handle_cow_fault(pagetable, va0) < 0)
+                    return -1;
+                // Re-walk because handle_cow_fault replaced the page mapping
+                pte = walk(pagetable, va0, 0);
+                if (pte == nullptr || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+                    return -1;
+            }
 
             pa0 = PTE2PA(*pte);
             n = PGSIZE - (dstva - va0);
@@ -418,5 +431,21 @@ namespace VM
         w_satp(MAKE_SATP(kernel_pagetable));
         sfence_vma();
         Drivers::uart_puts("[Boot] MMU ENABLED! Using virtual addresses.\n");
+    }
+
+    uint64 walkaddr(uint64 *pagetable, uint64 va)
+    {
+        uint64 *pte;
+        uint64 pa;
+
+        if (va >= MAXVA)
+            return 0;
+
+        pte = walk(pagetable, va, 0);
+        if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+            return 0;
+
+        pa = PTE2PA(*pte);
+        return pa;
     }
 }

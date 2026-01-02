@@ -22,4 +22,6 @@ namespace VM
 
     int handle_cow_fault(uint64 *pagetable, uint64 va);
     int mappages(uint64 *pagetable, uint64 va, uint64 size, uint64 pa, int perm);
+
+    uint64 walkaddr(uint64 *pagetable, uint64 va);
 }

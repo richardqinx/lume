@@ -75,7 +75,7 @@ namespace PMM
         uint64 kern_end_pa = PGROUNDUP((uint64)kernel_end);
         total_pages = (PHYSTOP - KERNBASE) / PGSIZE;
 
-        Drivers::uart_puts("PMM: Total RAM size: 128MB\n");
+        Drivers::uart_puts(ANSI_GREEN "[PMM] Total RAM size: 128MB\n" ANSI_RESET);
         // Place the mem_map array
         // mem_map is located immediately after kernel_end
         mem_map = (struct Page*)kern_end_pa;
@@ -83,17 +83,17 @@ namespace PMM
         uint64 mem_map_size = total_pages * sizeof(struct Page);
         uint64 free_mem_start = PGROUNDUP(kern_end_pa + mem_map_size);
 
-        Drivers::uart_puts("PMM: MemMap placed at: ");
+        Drivers::uart_puts(ANSI_GREEN "[PMM] MemMap placed at: " );
         Drivers::print_hex((uint64)mem_map);
-        Drivers::uart_putc('\n');
+        Drivers::uart_puts("\n" ANSI_RESET);
 
-        Drivers::uart_puts("PMM: Free memory starts at: ");
+        Drivers::uart_puts(ANSI_GREEN "[PMM] Free memory starts at: ");
         Drivers::print_hex(free_mem_start);
-        Drivers::uart_puts("\n");
+        Drivers::uart_puts("\n" ANSI_RESET);
 
         if (free_mem_start >= PHYSTOP)
         {
-            Drivers::uart_puts("PMM: Error - Kernel too large, no memory left!\n");
+            Drivers::uart_puts(ANSI_RED "[PMM] Error - Kernel too large, no memory left!\n" ANSI_RESET);
             while (1)
                 ;
         }

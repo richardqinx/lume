@@ -5,6 +5,7 @@
 #include "drivers/virtio.h"
 #include "kernel/pmm.h"
 #include "kernel/mm.h"
+#include "kernel/slab.h"
 #include "kernel/proc.h"
 #include "kernel/trap.h"
 #include "kernel/timer.h"
@@ -34,6 +35,7 @@ extern "C" void kernel_main(uint64 hartid, uint64 dtb)
         PMM::init();              // Physical Memory Management
         VM::kvminit();            // Kernel Pagetable
         VM::kvminithart();        // Enable MMU
+        Slab::init();
         Trap::init();             // Trap Management
         Trap::inithart();
         PLIC::init();

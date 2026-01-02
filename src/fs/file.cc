@@ -5,6 +5,9 @@
 #include "kernel/proc.h"
 
 #define NFILE 100
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
 
 namespace FileTable
 {
@@ -136,5 +139,42 @@ namespace FileTable
             return 0;
         }
         return -1;
+    }
+
+    int lseek(struct file *f, int offset, int whence)
+    {
+        if (f->type != FD_INODE)
+            return -1;
+
+        VFS::ilock(f->ip);
+
+        int new_off = f->off;
+        int size = f->ip->size;
+
+        switch (whence)
+        {
+        case SEEK_SET:
+            new_off = offset;
+            break;
+        case SEEK_CUR:
+            new_off += offset;
+            break;
+        case SEEK_END:
+            new_off = size + offset;
+            break;
+        default:
+            VFS::iunlock(f->ip);
+            return -1;
+        }
+
+        if (new_off < 0)
+        {
+            VFS::iunlock(f->ip);
+            return -1;
+        }
+
+        f->off = new_off;
+        VFS::iunlock(f->ip);
+        return new_off;
     }
 } // namespace FileTable

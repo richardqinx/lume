@@ -129,15 +129,19 @@ namespace Exec
 
         // Prepare user stack
         uint64 sz = PGROUNDUP(vm_guard.sz);
-        uint64 sz1 = VM::uvmalloc(vm_guard.pagetable, sz, sz + 2 * PGSIZE, PTE_W | PTE_R | PTE_U);
+
+        const int stack_data_pages = 16;
+        const int stack_total_pages = stack_data_pages + 1;
+
+        uint64 sz1 = VM::uvmalloc(vm_guard.pagetable, sz, sz + stack_total_pages * PGSIZE, PTE_W | PTE_R | PTE_U);
         if (sz1 == 0)
             return -1;
         vm_guard.sz = sz1;
 
-        VM::uvmunmap(vm_guard.pagetable, sz1 - 2 * PGSIZE, 1, 0); // protected pagetable
+        VM::uvmunmap(vm_guard.pagetable, sz, 1, 0); // protected pagetable
 
         uint64 sp = sz1;
-        uint64 stackbase = sp - PGSIZE;
+        uint64 stackbase = sp - stack_data_pages * PGSIZE;
         uint64 ustack[32];
         uint64 argc = 0;
 

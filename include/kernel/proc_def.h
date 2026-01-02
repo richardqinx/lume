@@ -59,6 +59,10 @@ struct Proc
 
     struct Proc *next;
     struct Proc *prev;
+
+    struct Proc *all_next;
+    struct Proc *all_prev;
+
     int priority;
     int ticks;
     struct cpu *cpu;

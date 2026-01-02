@@ -383,12 +383,21 @@ int main()
 
     while (getcmd(buf, sizeof(buf)) >= 0)
     {
-        if (buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' ')
+        if (buf[0] == 'c' && buf[1] == 'd' && (buf[2] == ' ' || buf[2] == '\n' || buf[2] == 0))
         {
-            buf[strlen(buf) - 1] = 0; // chop \n
-            if (chdir(buf + 3) < 0)
+            if (buf[strlen(buf) - 1] == '\n')
+                buf[strlen(buf) - 1] = 0;
+
+            char *path = buf + 3;
+            if (buf[2] == '\n' || buf[2] == 0)
             {
-                printf("cannot cd %s\n", buf + 3);
+                printf("cd: argument missing\n");
+                continue;
+            }
+
+            if (chdir(path) < 0)
+            {
+                printf("cannot cd %s\n", path);
             }
             continue;
         }

@@ -134,14 +134,11 @@ static header_t *morecore(size_t nu)
 void *malloc(size_t size)
 {
     header_t *p, *prevp;
-    size_t nunits = 0;
 
     if (size == 0)
         return NULL;
 
     size = ALIGN(size + sizeof(header_t));
-
-    nunits = (nunits * sizeof(header_t) + ALIGNMENT - 1) / ALIGNMENT * ALIGNMENT / sizeof(header_t);
 
     LOCK();
 
@@ -161,9 +158,11 @@ void *malloc(size_t size)
             }
             else
             {
-                p->size -= (nunits * sizeof(header_t));
+                p->size -= size;
+
                 p = (header_t *)((char *)p + p->size);
-                p->size = (nunits * sizeof(header_t));
+
+                p->size = size;
             }
             freep = prevp;
             UNLOCK();
@@ -172,7 +171,7 @@ void *malloc(size_t size)
 
         if (p == freep)
         {
-            if ((p = morecore(nunits * sizeof(header_t))) == NULL)
+            if ((p = morecore(size)) == NULL)
             {
                 UNLOCK();
                 errno = ENOMEM;

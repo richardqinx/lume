@@ -7,12 +7,13 @@
 #include "kernel/mm.h"
 #include "kernel/trap.h"
 #include "kernel/riscv.h"
+#include "kernel/slab.h"
 #include "drivers/uart.h"
 #include "fs/fs.h"
 #include "fs/file.h"
 #include "lib/string.h"
 
-#define NPROC 64
+// #define NPROC 64
 #define NCPU 8
 
 extern "C" void swtch(struct Context *old_ctx, struct Context *new_ctx);
@@ -21,7 +22,9 @@ extern "C" void usertrap();
 extern "C" void userret(uint64, uint64);
 extern char initcode_start[], initcode_end[];
 
-struct Proc procs[NPROC];
+// struct Proc procs[NPROC];
+struct Proc *proc_list_head = nullptr;
+struct Proc *initproc = nullptr;
 struct Spinlock proc_mem_lock;
 struct cpu cpus[NCPU];
 struct RunQueue runqueues[NCPU];
@@ -161,15 +164,24 @@ static Proc *allocproc()
 {
     struct Proc *p;
     proc_mem_lock.acquire();
-    for (p = procs; p < &procs[NPROC]; p++)
-    {
-        if (p->state == UNUSED)
-            goto found;
-    }
-    proc_mem_lock.release();
-    return 0;
 
-found:
+    p = (struct Proc *)Slab::kmalloc(sizeof(struct Proc));
+
+    if (!p)
+    {
+        proc_mem_lock.release();
+        return 0;
+    }
+
+    memset(p, 0, sizeof(struct Proc));
+
+    p->all_next = proc_list_head;
+    p->all_prev = nullptr;
+    if (proc_list_head)
+        proc_list_head->all_prev = p;
+    proc_list_head = p;
+
+
     p->state = USED;
     p->pid = nextpid++;
     p->priority = 0;
@@ -181,13 +193,29 @@ found:
     if ((p->tf = (struct Trapframe *)PMM::alloc_page()) == 0)
     {
         p->state = UNUSED;
+        if (p->all_next)
+            p->all_next->all_prev = p->all_prev;
+        if (p->all_prev)
+            p->all_prev->all_next = p->all_next;
+        if (p == proc_list_head)
+            proc_list_head = p->all_next;
+        Slab::kfree(p);
         proc_mem_lock.release();
         return 0;
     }
+
     if ((p->kstack = PMM::alloc_page()) == 0)
     {
         PMM::free_page(p->tf);
         p->state = UNUSED;
+        if (p->all_next)
+            p->all_next->all_prev = p->all_prev;
+        if (p->all_prev)
+            p->all_prev->all_next = p->all_next;
+        if (p == proc_list_head)
+            proc_list_head = p->all_next;
+        Slab::kfree(p);
+
         proc_mem_lock.release();
         return 0;
     }
@@ -224,13 +252,16 @@ static void freeproc(struct Proc *p)
         VFS::iput(p->cwd);
         p->cwd = nullptr;
     }
-    p->pagetable = 0;
-    p->sz = 0;
-    p->pid = 0;
-    p->parent = 0;
-    p->name[0] = 0;
-    p->chan = 0;
-    p->state = UNUSED;
+
+    if (p->all_prev)
+        p->all_prev->all_next = p->all_next;
+    else
+        proc_list_head = p->all_next;
+
+    if (p->all_next)
+        p->all_next->all_prev = p->all_prev;
+
+    Slab::kfree(p);
 }
 
 int fork()
@@ -242,13 +273,14 @@ int fork()
         return -1;
 
     np->pagetable = VM::uvmcreate();
+    np->sz = p->sz;
     if (VM::uvmcopy(p->pagetable, np->pagetable, p->sz) < 0)
     {
         freeproc(np);
         proc_mem_lock.release();
         return -1;
     }
-    np->sz = p->sz;
+    
 
     if (VM::mappages(np->pagetable, TRAPFRAME, PGSIZE, (uint64)np->tf, PTE_R | PTE_W) < 0)
     {
@@ -293,8 +325,8 @@ namespace ProcManager
     void init()
     {
         proc_mem_lock.init("proc_mem");
-        for (int i = 0; i < NPROC; i++)
-            procs[i].state = UNUSED;
+
+        proc_list_head = nullptr;
 
         for (int i = 0; i < NCPU; i++)
         {
@@ -372,6 +404,8 @@ namespace ProcManager
         struct Proc *p = allocproc();
         if (!p)
             return;
+
+        initproc = p;
 
         p->pagetable = VM::uvmcreate();
 
@@ -460,7 +494,7 @@ namespace ProcManager
 
     void wakeup(void *chan)
     {
-        for (struct Proc *p = procs; p < &procs[NPROC]; p++)
+        for (struct Proc *p = proc_list_head; p != nullptr; p = p->all_next)
         {
             if (p->state == SLEEPING && p->chan == chan)
             {
@@ -476,14 +510,15 @@ namespace ProcManager
     void exit(int status)
     {
         struct Proc *p = myproc();
-        struct Proc *initproc = &procs[0];
         if (p == initproc)
             while (1)
                 ;
 
         wakeup(p->parent);
 
-        for (struct Proc *pp = procs; pp < &procs[NPROC]; pp++)
+        proc_mem_lock.acquire();
+
+        for (struct Proc *pp = proc_list_head; pp != nullptr; pp = pp->all_next)
         {
             if (pp->parent == p)
             {
@@ -491,6 +526,8 @@ namespace ProcManager
                 wakeup(initproc);
             }
         }
+
+        proc_mem_lock.release();
 
         p->xstate = status;
 
@@ -513,7 +550,7 @@ namespace ProcManager
             havekids = 0;
             proc_mem_lock.acquire();
 
-            for (np = procs; np < &procs[NPROC]; np++)
+            for (np = proc_list_head; np != nullptr; np = np->all_next)
             {
                 if (np->parent == p)
                 {
@@ -561,7 +598,7 @@ namespace ProcManager
         {
             // Call VM::uvmalloc to allocate memory
             // Parameters: page table, old size, new size, permissions (PTE_W)
-            if ((sz = VM::uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0)
+            if ((sz = VM::uvmalloc(p->pagetable, sz, sz + n, PTE_W | PTE_R | PTE_U)) == 0)
             {
                 return -1;
             }

@@ -5,9 +5,6 @@
 #include "lib/string.h"
 #include "drivers/uart.h"
 
-// COW Flag (PTE bit 8)
-#define PTE_COW (1L << 8)
-
 extern "C"
 {
     extern char kernel_end[];

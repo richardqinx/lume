@@ -217,6 +217,16 @@ namespace FileTable
         if (f->type == FD_INODE)
         {
             VFS::ilock(f->ip);
+
+            if (f->ip->type == T_DEVICE)
+            {
+                if (f->ip->major == 1)
+                {
+                    VFS::iunlock(f->ip);
+                    return Drivers::console_read(addr, n);
+                }
+            }
+
             int r = f->ip->read((char*)addr, f->off, n, 1);
             if(r > 0)
             {
@@ -240,6 +250,37 @@ namespace FileTable
         if (f->type == FD_INODE)
         {
             VFS::ilock(f->ip);
+
+            if (f->ip->type == T_DEVICE)
+            {
+                if (f->ip->major == 1) // Console
+                {
+                    VFS::iunlock(f->ip);
+                    struct Proc *proc = myproc();
+                    constexpr int MAX_WRITE_BUF = 128;
+                    char buf[MAX_WRITE_BUF];
+                    int i = 0;
+                    while (i < n)
+                    {
+                        int len = n - i;
+                        if (len > MAX_WRITE_BUF)
+                            len = MAX_WRITE_BUF;
+
+                        if (VM::copyin(proc->pagetable, buf, addr + i, static_cast<uint64>(len)) < 0)
+                        {
+                            return -1;
+                        }
+
+                        for (int j = 0; j < len; j++)
+                        {
+                            Drivers::uart_putc(buf[j]);
+                        }
+                        i += len;
+                    }
+                    return n;
+                }
+            }
+
             int r = f->ip->write((char *)addr, f->off, n, 1);
             if (r > 0)
             {

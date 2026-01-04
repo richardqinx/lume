@@ -503,7 +503,9 @@ static uint64_t sys_read()
     // get param: fd, buf, len
     if (argint(0, &fd) < 0 || argint(2, &n) < 0 || argint(1, (int *)&p) < 0)
         return -1;
-    
+        
+    p = argraw(1);
+
     struct Proc* proc = myproc();
     if (fd == 0 && proc->ofile[fd] == nullptr)
     {

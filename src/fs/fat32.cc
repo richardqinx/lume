@@ -141,8 +141,6 @@ uint32 FAT32FileSystem::next_cluster(uint32 cluster)
     uint32 ent_offset = fat_offset % 512;
 
     // block = sector / 2
-    // offset in block = (sector % 2) * 512 + ent_offset
-
     struct Buf *b = BufferCache::bread(0, fat_sector / 2);
 
     uint32 block_offset = (fat_sector % 2) * 512 + ent_offset;
@@ -176,6 +174,20 @@ int FAT32Inode::read(char *dst, uint32 off, uint32 n, int isUser)
 {
     if (first_clus == 0)
         return 0;
+
+    // [FIX] 只有非目录文件才检查 size 边界
+    // 目录文件 size 可能为 0，应允许读取直到簇链结束
+    if (type != T_DIR)
+    {
+        if (off >= size)
+        {
+            return 0;
+        }
+        if (off + n > size)
+        {
+            n = size - off;
+        }
+    }
 
     uint32 tot = 0;
     uint32 clus = first_clus;
@@ -303,7 +315,7 @@ uint32 FAT32FileSystem::alloc_cluster()
         uint32 current_fat_sec = fat_start_sector + i;
         struct Buf *b = BufferCache::bread(0, current_fat_sec / 2);
         uint32 *table = (uint32 *)(b->data + (current_fat_sec % 2) * 512);
-        for(uint32 j = 0; j <  fat_entries_per_sector; j++)
+        for (uint32 j = 0; j < fat_entries_per_sector; j++)
         {
             if (i == 0 && j < 2)
                 continue;
@@ -359,7 +371,6 @@ void FAT32FileSystem::free_cluster_chain(uint32 cluster)
 
         cluster = next;
     }
-    
 }
 
 void FAT32Inode::update()
@@ -654,7 +665,9 @@ int FAT32Inode::unlink(const char *name)
 
     uint32_t clus = first_clus;
     bool found = false;
-    struct Buf *target_buf = nullptr;
+
+    // [FIX] Deadlock prevention: Do not hold buffer while looking up inode
+    uint32_t target_block = 0;
     uint32_t target_offset = 0;
     struct FAT32_DirEnt de;
 
@@ -681,16 +694,16 @@ int FAT32Inode::unlink(const char *name)
 
                 if (match_name(de.name, name))
                 {
-                    target_buf = b;
+                    target_block = (sec + i) / 2;
                     target_offset = ((sec + i) % 2) * 512 + off;
                     found = true;
                     break;
                 }
             }
 
+            BufferCache::brelse(b); // Always release buffer
             if (found)
                 break;
-            BufferCache::brelse(b);
         }
 
         if (found)
@@ -701,7 +714,7 @@ int FAT32Inode::unlink(const char *name)
             return -1;
     }
 
-    if (found && target_buf)
+    if (found)
     {
         Inode *target_ip = lookup(name);
         if (target_ip)
@@ -710,7 +723,6 @@ int FAT32Inode::unlink(const char *name)
             if (target_ip->type == T_DIR)
             {
                 VFS::iunlockput(target_ip);
-                BufferCache::brelse(target_buf);
                 return -1;
             }
 
@@ -719,6 +731,8 @@ int FAT32Inode::unlink(const char *name)
             VFS::iunlockput(target_ip);
         }
 
+        // Re-read buffer to mark deletion
+        struct Buf *target_buf = BufferCache::bread(dev, target_block);
         uint8_t *ptr = (uint8_t *)target_buf->data + target_offset;
         *ptr = 0xE5;
 

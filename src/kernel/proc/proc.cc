@@ -152,7 +152,8 @@ void forkret()
     struct cpu *c = mycpu();
     c->runqueue->lock.release();
 
-    Drivers::uart_puts("[Proc] forkret: jumping to user.\n");
+    // Debug
+    // Drivers::uart_puts("[Proc] forkret: jumping to user.\n");
 
     // Enter user mode
     usertrapret();
@@ -185,6 +186,7 @@ static Proc *allocproc()
     p->state = USED;
     p->pid = nextpid++;
     p->priority = 0;
+    p->killed = 0;
     p->cpu = mycpu();
     p->cwd = nullptr;
     for (int i = 0; i < NOFILE; i++)
@@ -585,6 +587,34 @@ namespace ProcManager
                 return -1;
             sleep(p, &proc_mem_lock);
         }
+    }
+
+    int kill(int pid)
+    {
+        Proc* p;
+        proc_mem_lock.acquire();
+        for (p = proc_list_head; p != nullptr; p = p->all_next)
+        {
+            if (p->pid == pid)
+            {
+                p->killed = 1;
+
+                if (p->state == SLEEPING)
+                {
+                    p->state = RUNNABLE;
+
+                    struct cpu *c = mycpu();
+                    c->runqueue->lock.acquire();
+                    c->runqueue->enqueue(p);
+                    c->runqueue->lock.release();
+                }
+
+                proc_mem_lock.release();
+                return 0;
+            }
+        }
+        proc_mem_lock.release();
+        return -1;
     }
 
     int growproc(int n)

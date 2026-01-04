@@ -23,6 +23,7 @@ extern "C" {
     char *sbrk(int n);
     int sleep(int ticks);
     int uptime();
+    int shutdown();
 
     // Debug
     void putc(char c);

@@ -9,6 +9,7 @@
 #include "kernel/mm.h"
 #include "kernel/trap.h"
 #include "kernel/slab.h"
+#include "kernel/sbi.h"
 #include "fs/fat32.h"
 #include "fs/file.h"
 #include "lib/string.h"
@@ -113,11 +114,37 @@ static uint64 sys_open()
     if (argstr(0, path, 128) < 0 || argint(1, &omode) < 0)
         return -1;
 
-    ip = VFS::namei(path);
+    if (omode & O_CREATE)
+    {
+        ip = VFS::namei(path);
+        if (ip == nullptr)
+        {
+            char name[128];
+            Inode *dp = VFS::nameiparent(path, name);
+            if (dp)
+            {
+                VFS::ilock(dp);
+                ip = dp->create(name, T_FILE, 0, 0);
+                VFS::iunlockput(dp);
+            }
+        }
+    }
+    else
+    {
+        ip = VFS::namei(path);
+    }
+
     if (ip == nullptr)
     {
         return -1;
     }
+
+    VFS::ilock(ip);
+    if ((omode & O_TRUNC) && ip->type == T_FILE)
+    {
+        ip->truncate();
+    }
+    VFS::iunlock(ip);
 
     f = FileTable::alloc();
     if (f == nullptr)
@@ -144,6 +171,128 @@ static uint64 sys_open()
     return fd;
 }
 
+static uint64 sys_mkdir()
+{
+    char path[128];
+    if (argstr(0, path, 128) < 0)
+        return -1;
+
+    Inode *ip = VFS::namei(path);
+    if (ip != nullptr)
+    {
+        VFS::iput(ip);
+        return -1; // the dir is exist
+    }
+
+    char name[128];
+    Inode *dp = VFS::nameiparent(path, name);
+    if (dp == nullptr)
+        return -1;
+
+    VFS::ilock(dp);
+    ip = dp->create(name, T_DIR, 0, 0);
+    VFS::iunlockput(dp);
+
+    if (ip == nullptr)
+        return -1;
+
+    VFS::iput(ip);
+    return 0;
+}
+
+static uint64 sys_chdir()
+{
+    char path[128];
+    if (argstr(0, path, 128) < 0)
+        return -1;
+
+    Inode *ip = VFS::namei(path);
+    if (ip == nullptr)
+        return -1;
+
+    VFS::ilock(ip);
+    if (ip->type != T_DIR)
+    {
+        VFS::iunlockput(ip);
+        return -1;
+    }
+    VFS::iunlock(ip);
+
+    struct Proc *p = myproc();
+    VFS::iput(p->cwd); // release old cwd
+    p->cwd = ip;       // switch to new cwd
+
+    return 0;
+}
+
+static uint64 sys_dup()
+{
+    int oldfd;
+    if (argint(0, &oldfd) < 0)
+        return -1;
+
+    struct Proc *p = myproc();
+    if (oldfd < 0 || oldfd >= NOFILE || p->ofile[oldfd] == nullptr)
+        return -1;
+
+    struct file *f = FileTable::dup(p->ofile[oldfd]);
+    int newfd = fdalloc(f);
+    if (newfd < 0)
+    {
+        FileTable::close(f); // fdalloc failed
+        return -1;
+    }
+    return newfd;
+}
+
+static uint64 sys_fstat()
+{
+    int fd;
+    uint64 stat_addr;
+
+    if (argint(0, &fd) < 0 || argint(1, (int *)&stat_addr) < 0)
+        return -1;
+
+    struct Proc *p = myproc();
+    if (fd < 0 || fd >= NOFILE || p->ofile[fd] == nullptr)
+        return -1;
+
+    return FileTable::stat(p->ofile[fd], stat_addr);
+}
+
+static uint64 sys_mknod()
+{
+    char path[128];
+    int major, minor;
+
+    if (argstr(0, path, 128) < 0 || argint(1, &major) < 0 || argint(2, &minor) < 0)
+        return -1;
+
+    Inode *ip = VFS::namei(path);
+    if (ip != nullptr)
+    {
+        VFS::iput(ip);
+        return -1;
+    }
+
+    char name[128];
+    Inode *dp = VFS::nameiparent(path, name);
+    if (dp == nullptr)
+        return -1;
+
+    VFS::ilock(dp);
+    ip = dp->create(name, T_DEVICE, major, minor);
+    VFS::iunlockput(dp);
+
+    if (ip == nullptr)
+        return -1;
+
+    VFS::iput(ip);
+    return 0;
+}
+
+
+
 static uint64 sys_close()
 {
     int fd;
@@ -159,6 +308,63 @@ static uint64 sys_close()
     return 0;
 }
 
+static uint64 sys_pipe()
+{
+    uint64 fdarray; // int fd[2]
+    struct file *rf, *wf;
+    int fd0, fd1;
+    struct Proc *p = myproc();
+
+    if (argint(0, (int *)&fdarray) < 0)
+        return -1;
+
+    if(Pipe::create_pair(&rf, &wf) < 0)
+        return -1;
+
+    if ((fd0 = fdalloc(rf)) < 0 || (fd1 = fdalloc(wf)) < 0)
+    {
+        if (fd0 >= 0)
+            p->ofile[fd0] = nullptr;
+        FileTable::close(rf);
+        FileTable::close(wf);
+        return -1;
+    }
+
+    if (VM::copyout(p->pagetable, fdarray, (char *)&fd0, sizeof(int)) < 0 ||
+        VM::copyout(p->pagetable, fdarray + sizeof(int), (char *)&fd1, sizeof(int)) < 0)
+    {
+        p->ofile[fd0] = nullptr;
+        p->ofile[fd1] = nullptr;
+        FileTable::close(rf);
+        FileTable::close(wf);
+        return -1;
+    }
+    return 0;
+}
+
+static uint64 sys_link()
+{
+    Drivers::uart_puts("Not supported now");
+    return -1;
+}
+
+static uint64 sys_unlink()
+{
+    char path[128], name[128];
+    if (argstr(0, path, 128) < 0)
+        return -1;
+
+    Inode *dp = VFS::nameiparent(path, name);
+    if (!dp)
+        return -1;
+
+    VFS::ilock(dp);
+    int ret = dp->unlink(name);
+    VFS::iunlockput(dp);
+
+    return ret;
+}
+
 static uint64 sys_exec()
 {
     char path[128];
@@ -169,10 +375,7 @@ static uint64 sys_exec()
         return -1;
     }
 
-    if (argint(1, (int *)&uargv_ptr) < 0)
-    {
-        return -1;
-    }
+    uargv_ptr = argraw(1);
 
     KernelArgv kargv;
 
@@ -328,6 +531,48 @@ static uint64 sys_sbrk()
     return addr;
 }
 
+static uint64 sys_uptime()
+{
+    return Timer::get_ticks();
+}
+
+static uint64 sys_kill()
+{
+    int pid;
+    if (argint(0, &pid) < 0)
+        return -1;
+
+    return ProcManager::kill(pid);
+}
+
+static uint64 sys_sleep()
+{
+    int n;
+    uint64 ticks0;
+
+    if (argint(0, &n) < 0)
+        return -1;
+
+    Spinlock *lk = Timer::get_lock();
+    lk->acquire();
+
+    ticks0 = Timer::get_ticks();
+
+    while (Timer::get_ticks() - ticks0 < (uint64)n)
+    {
+        if (myproc()->killed)
+        {
+            lk->release();
+            return -1;
+        }
+
+        ProcManager::sleep(Timer::get_tick_chan(), lk);
+    }
+
+    lk->release();
+    return 0;
+}
+
 static uint64 sys_disk_test()
 {
     // VirtIO::test_rw();
@@ -347,6 +592,14 @@ static uint64 sys_lseek()
         return -1;
 
     return FileTable::lseek(p->ofile[fd], offset, whence);
+}
+
+static uint64 sys_shutdown()
+{
+    SBI::sbi_shutdown();
+    while (1)
+        ;
+    return 0;
 }
 
 void syscall()
@@ -383,9 +636,7 @@ void syscall()
     case SYS_exec:
         ret = sys_exec();
         if (ret != static_cast<uint64>(-1))
-        {
             return;
-        }
         break;
     case SYS_exit:
         ret = sys_exit();
@@ -405,16 +656,42 @@ void syscall()
     case SYS_lseek:
         ret = sys_lseek();
         break;
-    case SYS_pipe:
     case SYS_dup:
-    case SYS_chdir:
+        ret = sys_dup();
+        break;
     case SYS_fstat:
+        ret = sys_fstat();
+        break;
+    case SYS_chdir:
+        ret = sys_chdir();
+        break;
     case SYS_mkdir:
+        ret = sys_mkdir();
+        break;
     case SYS_mknod:
+        ret = sys_mknod();
+        break;
+    case SYS_pipe:
+        ret = sys_pipe();
+        break;
     case SYS_unlink:
+        ret = sys_unlink();
+        break;
     case SYS_link:
         Drivers::uart_puts("Unimplemented syscall\n");
-        ret = static_cast<uint64>(-1);
+        ret = sys_link();
+        break;
+    case SYS_uptime:
+        ret = sys_uptime();
+        break;
+    case SYS_sleep:
+        ret = sys_sleep();
+        break;
+    case SYS_kill:
+        ret = sys_kill();
+        break;
+    case SYS_shutdown:
+        ret = sys_shutdown();
         break;
     default:
         Drivers::uart_puts("Unknown Syscall ID: ");

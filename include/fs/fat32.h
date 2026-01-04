@@ -74,6 +74,8 @@ public:
     uint32 first_clus;  // The starting cluster number of the file
     uint32 parent_clus; // Starting cluster number of the parent directory
     uint32 dir_offset;  // The byte offset of this directory entry in the parent directory
+    uint32 ent_sec;     // Sector number of the directory entry
+    uint32 ent_off;     // Offset of the directory entry within the sector
 
     FAT32Inode() : fs(nullptr), first_clus(0) {}
     // Implement VFS Interface
@@ -83,6 +85,7 @@ public:
     Inode *lookup(const char *name) override;
     Inode *create(const char *name, short type, short major, short minor) override;
     void truncate() override;
+    int unlink(const char *name) override;
 };
 
 class FAT32FileSystem : public FileSystem
@@ -93,17 +96,20 @@ public:
     uint32 root_cluster;
     uint32 sectors_per_cluster;
     uint32 bytes_per_cluster;
+    uint32 fat_sz;                  // Size of the FAT table (number of sectors)
 
     void init() override;
     Inode* root() override;
 
     // Helper functions
-    uint32 next_cluster(uint32 cluster); // Check the FAT table for the next cluster
-    uint32 alloc_cluster();              // Assign a new cluster
+    uint32 next_cluster(uint32 cluster);    // Check the FAT table for the next cluster
+    uint32 alloc_cluster();                 // Assign a new cluster
     uint32 cluster_to_sector(uint32 cluster);
 
     // directory entry parsing
     void read_dir_ent(struct FAT32_DirEnt *de, char *filename);
+    // Release the entire cluster chain starting from the cluster
+    void free_cluster_chain(uint32 cluster);
 };
 
 extern FAT32FileSystem fat32_fs;

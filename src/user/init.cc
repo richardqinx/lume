@@ -2,12 +2,14 @@
 #include "ulib/stdlib.h"
 #include "ulib/string.h"
 #include "user/user.h"
+#include "drivers/uart_color.h"
 
 int main()
 {
     char *argv[] = {(char *)"sh", 0};
 
-    printf("[Init] Starting Lume OS Shell...\n");
+    printf(ANSI_BLUE"\n[Init] Starting Lume OS Shell..."ANSI_RESET);
+    printf("\n");
 
     while (1)
     {

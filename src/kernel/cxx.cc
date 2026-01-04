@@ -66,3 +66,9 @@ void operator delete[](void *p, unsigned long size)
     if (p)
         PMM::free_page(p);
 }
+
+void *operator new(unsigned long size, void *ptr)
+{
+    (void)size;
+    return ptr;
+}

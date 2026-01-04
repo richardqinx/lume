@@ -3,6 +3,7 @@
 #include "ulib/string.h"
 #include "user/user.h"
 #include "common/fcntl.h"
+#include "drivers/uart_color.h"
 
 constexpr int MAX_ARGS = 10;
 const char *WHITESPACE = " \t\r\n\v";
@@ -334,35 +335,13 @@ int getcmd(char *buf, int nbuf)
     write(1, "$ ", 2);
     memset(buf, 0, nbuf);
 
-    int i = 0;
-    while (i < nbuf - 1)
-    {
-        char c;
-        int n = read(0, &c, 1);
-        if (n <= 0)
-            return -1;
+    int n = read(0, buf, nbuf - 1);
 
-        if (c == '\b' || c == 127)
-        {
-            if (i > 0)
-            {
-                write(1, "\b \b", 3);
-                i--;
-            }
-        }
-        else if (c == '\n' || c == '\r')
-        {
-            write(1, "\n", 1);
-            buf[i] = 0;
-            return 0;
-        }
-        else
-        {
-            write(1, &c, 1);
-            buf[i++] = c;
-        }
-    }
-    return -1;
+    if (n < 0)
+        return -1;
+
+    buf[n] = 0;
+    return 0;
 }
 
 int main()
@@ -379,10 +358,18 @@ int main()
     //     }
     // }
 
-    printf("\n[Lume Shell] Initialized! \n");
+    printf(ANSI_GREEN"\n[Lume Shell] Welcome! \n"ANSI_RESET);
+    printf(ANSI_YELLOW "[Lume Shell] Start your journey of exploration!"ANSI_RESET);
+    printf("\n");
 
     while (getcmd(buf, sizeof(buf)) >= 0)
     {
+        int len = strlen(buf);
+        if (len > 0 && buf[len - 1] == '\n')
+        {
+            buf[len - 1] = 0;
+        }
+
         if (buf[0] == 'c' && buf[1] == 'd' && (buf[2] == ' ' || buf[2] == '\n' || buf[2] == 0))
         {
             if (buf[strlen(buf) - 1] == '\n')
@@ -399,6 +386,14 @@ int main()
             {
                 printf("cannot cd %s\n", path);
             }
+            continue;
+        }
+        if (strcmp(buf, "shutdown") == 0 || strcmp(buf, "poweroff") == 0)
+        {
+            printf(ANSI_BLUE"System shutting down..."ANSI_RESET);
+            printf("\n");
+            shutdown();
+
             continue;
         }
 

@@ -1,4 +1,5 @@
 #include "common/types.h"
+#include "kernel/sbi.h"
 
 namespace SBI
 {
@@ -30,5 +31,18 @@ namespace SBI
     void set_timer(uint64 stime_value)
     {
         sbi_call(0x54494D45, 0, stime_value, 0, 0);
+    }
+
+    void sbi_shutdown()
+    {
+        sbi_call(0x53525354, 0, 0, 0, 0);
+        sbi_call(0x08, 0, 0, 0, 0);
+        while (1)
+            ;
+    }
+
+    void sbi_reboot()
+    {
+        sbi_call(SBI_EID_SRST, SBI_FID_SRST_RESET, SBI_SRST_TYPE_COLD_REBOOT, SBI_SRST_REASON_NONE, 0);
     }
 }

@@ -149,6 +149,7 @@ namespace VFS
         Inode *ip, *next;
         struct Proc *p = myproc();
 
+        // 1. 确定起点
         if (*path == '/')
         {
             ip = get_root();
@@ -170,6 +171,23 @@ namespace VFS
 
         while ((path = skipelem(path, name)) != nullptr)
         {
+            if (strcmp(name, ".") == 0)
+            {
+                continue;
+            }
+
+            if (strcmp(name, "..") == 0)
+            {
+                Inode *root = get_root();
+                bool is_root = (ip->inum == root->inum);
+                iput(root);
+
+                if (is_root)
+                {
+                    continue;
+                }
+            }
+
             ilock(ip);
 
             if (ip->type != T_DIR)
@@ -189,4 +207,38 @@ namespace VFS
         return ip;
     }
 
+    Inode *nameiparent(const char* path, char* name)
+    {
+        Inode* ip;
+        Inode* next;
+
+        if (*path == '/')
+            ip = get_root();
+        else
+            ip = idup(myproc()->cwd ? myproc()->cwd : get_root());
+
+        while ((path = skipelem(path, name)) != nullptr)
+        {
+            if (*path == 0)
+            {
+                return ip;
+            }
+
+            ilock(ip);
+            if (ip->type != T_DIR)
+            {
+                iunlockput(ip);
+                return nullptr;
+            }
+
+            next = ip->lookup(name);
+            iunlockput(ip);
+
+            ip = next;
+            if (!ip)
+                return nullptr;
+        }
+        iput(ip);
+        return nullptr;
+    }
 } // namespace VFS

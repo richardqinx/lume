@@ -7,6 +7,15 @@
 
 namespace Drivers
 {
+    struct
+    {
+        Spinlock lock;
+        char buf[128]; // Line buffer
+        uint32 r;      // Read pointer (position taken by the user)
+        uint32 w;      // Write pointer (position confirmed by Enter)
+        uint32 e;      // Editing cursor (current typing position)
+    } cons;
+
     // Circular buffer structure
     struct
     {
@@ -21,6 +30,7 @@ namespace Drivers
     void uart_init()
     {
         uart_rx.lock.init("uart_rx");
+        cons.lock.init("console");
         uart_tx_lock.init("uart_tx");
         uart_rx.r = 0;
         uart_rx.w = 0;
@@ -119,88 +129,72 @@ namespace Drivers
         struct Proc *p = myproc();
         int target_idx = 0;
 
-        uart_rx.lock.acquire();
+        cons.lock.acquire();
 
         while (target_idx < len)
         {
-            while (uart_rx.r == uart_rx.w)
+            while (cons.r < cons.w)
             {
-                if (p->xstate != 0)
-                {
-                    uart_rx.lock.release();
+                char c = cons.buf[cons.r++ % sizeof(cons.buf)];
+                cons.lock.release();
+
+                if (VM::copyout(p->pagetable, target + target_idx, &c, 1) < 0)
                     return -1;
-                }
-                ProcManager::sleep(&uart_rx, &uart_rx.lock);
-            }
 
-            char c = uart_rx.buf[uart_rx.r % UART_RX_BUF_SIZE];
-            uart_rx.r++;
+                target_idx++;
+                if (c == '\n')
+                    return target_idx;
+                if (target_idx == len)
+                    return target_idx;
 
-            uart_rx.lock.release();
-
-            // 1. Handle Backspace (127 or \b)
-            if (c == 127 || c == '\b')
-            {
-                if (target_idx > 0)
-                {
-                    // Erase character from screen: Backspace, Space, Backspace
-                    uart_putc('\b');
-                    uart_putc(' ');
-                    uart_putc('\b');
-                    target_idx--;
-                }
-                uart_rx.lock.acquire();
-                continue;
-            }
-
-            // 2. Handle Ctrl+U (Kill Line)
-            if (c == 0x15)
-            {
-                while (target_idx > 0)
-                {
-                    uart_putc('\b');
-                    uart_putc(' ');
-                    uart_putc('\b');
-                    target_idx--;
-                }
-                uart_rx.lock.acquire();
-                continue;
-            }
-
-            // 3. Handle Ctrl+L (Clear Screen)
-            if (c == 0x0C)
-            {
-                uart_puts(ANSI_CLEAR);
-                uart_puts("$ ");
-                uart_rx.lock.acquire();
-                continue;
-            }
-
-            // 4. Handle Return (CR -> LF)
-            if (c == '\r')
-            {
-                c = '\n';
-            }
-
-            // Echo back to user
-            // uart_putc(c);
-
-            if (VM::copyout(p->pagetable, target + target_idx, &c, 1) < 0)
-            {
-                return -1;
-            }
-
-            target_idx++;
-
-            if (c == '\n')
-            {
-                return target_idx;
+                cons.lock.acquire();
             }
 
             uart_rx.lock.acquire();
+            while (uart_rx.r == uart_rx.w)
+            {
+                if (p->xstate)
+                {
+                    uart_rx.lock.release();
+                    cons.lock.release();
+                    return -1;
+                }
+                cons.lock.release();
+                ProcManager::sleep(&uart_rx, &uart_rx.lock);
+                cons.lock.acquire();
+            }
+
+            char c = uart_rx.buf[uart_rx.r++ % UART_RX_BUF_SIZE];
+            uart_rx.lock.release();
+
+            if (c == 127 || c == '\b')
+            {
+                if (cons.e != cons.w)
+                {
+                    cons.e--;
+                    uart_putc('\b');
+                    uart_putc(' ');
+                    uart_putc('\b');
+                }
+            }
+            else
+            {
+                if (c == '\r')
+                    c = '\n';
+
+                uart_putc(c);
+
+                cons.buf[cons.e++ % sizeof(cons.buf)] = c;
+
+                if (c == '\n' || cons.e == cons.w + sizeof(cons.buf))
+                {
+                    cons.w = cons.e;
+                    ProcManager::wakeup(&cons);
+                }
+            }
         }
 
-        uart_rx.lock.release();
+        cons.lock.release();
         return target_idx;
     }
 }

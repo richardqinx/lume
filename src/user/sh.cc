@@ -67,11 +67,26 @@ struct RedirCommand : public Command
     void run() override
     {
         close(fd);
-        if (open(file, mode) < 0)
+
+        int newfd = open(file, mode);
+
+        if (newfd < 0)
         {
             printf("open %s failed\n", file);
             exit(1);
         }
+
+        if (newfd != fd)
+        {
+
+            if (dup(newfd) != fd)
+            {
+                printf("Redirection failed: could not move fd %d to %d\n", newfd, fd);
+                exit(1);
+            }
+            close(newfd);
+        }
+
         sub_cmd->run();
     }
 };
@@ -348,15 +363,6 @@ int main()
 {
     static char buf[100];
 
-    // int fd;
-    // while ((fd = open("console", O_RDWR)) >= 0)
-    // {
-    //     if (fd >= 3)
-    //     {
-    //         close(fd);
-    //         break;
-    //     }
-    // }
 
     printf(ANSI_GREEN"\n[Lume Shell] Welcome! \n"ANSI_RESET);
     printf(ANSI_YELLOW "[Lume Shell] Start your journey of exploration!"ANSI_RESET);

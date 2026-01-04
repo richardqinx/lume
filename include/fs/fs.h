@@ -57,6 +57,8 @@ public:
     virtual void getattr(struct kstat *st);
     // Truncate file (set size to 0, release all data blocks)
     virtual void truncate() = 0;
+    // Delete the file named 'name' from the directory (Unlink)
+    virtual int unlink(const char *name) = 0;
 };
 
 // File System Abstraction (SuperBlock)
@@ -90,4 +92,6 @@ namespace VFS
     Inode *get_root();
     // Path Analysis
     Inode *namei(const char *path);
+    // Find the parent directory inode of the path, and copy the last part of the path (the file name) into the name buffer
+    Inode *nameiparent(const char *path, char *name);
 } // namespace VFS

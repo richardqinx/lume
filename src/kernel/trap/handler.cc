@@ -85,7 +85,8 @@ namespace Trap
         else if (is_interrupt && code == 5)
         {
             // Supervisor Timer Interrupt (IRQ 5)
-            Timer::set_next_trigger();
+            // Timer::set_next_trigger();
+            Timer::tick();
             // w_sip(r_sip() & ~2);
             return 2;
         }

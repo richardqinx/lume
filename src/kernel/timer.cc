@@ -1,15 +1,16 @@
 #include "common/types.h"
 #include "kernel/config.h"
-
-namespace SBI
-{
-    void set_timer(uint64 stime_value);
-}
+#include "kernel/spinlock.h"
+#include "kernel/proc.h"
+#include "kernel/sbi.h"
 
 #define INTERVAL 1000000
 
 namespace Timer
 {
+    uint64 ticks;
+    Spinlock tickslock;
+
     uint64 get_time()
     {
         uint64 time;
@@ -30,5 +31,32 @@ namespace Timer
         asm volatile("csrr %0, sie" : "=r"(sie));
         sie |= (1L << 5);
         asm volatile("csrw sie, %0" : : "r"(sie));
+    }
+
+    void tick()
+    {
+        tickslock.acquire();
+        ticks++;
+        ProcManager::wakeup(&ticks);
+        tickslock.release();
+        set_next_trigger();
+    }
+
+    uint64 get_ticks()
+    {
+        tickslock.acquire();
+        uint64 t = ticks;
+        tickslock.release();
+        return t;
+    }
+
+    Spinlock *get_lock()
+    {
+        return &tickslock;
+    }
+
+    void *get_tick_chan()
+    {
+        return &ticks;
     }
 }

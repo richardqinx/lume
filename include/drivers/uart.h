@@ -1,5 +1,6 @@
 #pragma once
 #include "common/types.h"
+#include "drivers/uart_color.h"
 
 #define UART0 0x10000000L
 #define RHR 0 // Receive Holding Register (read mode)
@@ -14,14 +15,6 @@
 #define LSR_TX_IDLE 0x20  // THR can accept another character to send
 
 #define UART_RX_BUF_SIZE 128
-
-// ANSI Escape Codes for Modern Terminal Colors
-#define ANSI_RESET "\033[0m"
-#define ANSI_RED "\033[31m"
-#define ANSI_GREEN "\033[32m"
-#define ANSI_YELLOW "\033[33m"
-#define ANSI_BLUE "\033[34m"
-#define ANSI_CLEAR "\033[2J\033[1;1H"
 
 namespace Drivers
 {

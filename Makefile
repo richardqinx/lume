@@ -23,17 +23,12 @@ ULIB_OBJS := $(BUILD_DIR)/user/entry.o \
 
 INITCODE_BIN := $(BUILD_DIR)/user/initcode
 
-SH_SRC   := $(SRC_DIR)/user/sh.cc
-SH_OBJ   := $(BUILD_DIR)/user/sh.o
-SH_BIN   := $(BUILD_DIR)/user/sh
 
-INIT_SRC := $(SRC_DIR)/user/init.cc
-INIT_OBJ := $(BUILD_DIR)/user/init.o
-INIT_BIN := $(BUILD_DIR)/user/init
+USER_SRCS := $(wildcard $(SRC_DIR)/user/*.cc)
+UPROGS    := $(patsubst $(SRC_DIR)/user/%.cc, $(BUILD_DIR)/user/%, $(USER_SRCS))
 
 SRCS_S   := $(shell find $(SRC_DIR) -name "*.S" -not -path "$(SRC_DIR)/user/*" -not -path "$(SRC_DIR)/ulib/*")
 SRCS_CXX := $(shell find $(SRC_DIR) -name "*.cc" -not -path "$(SRC_DIR)/user/*" -not -path "$(SRC_DIR)/ulib/*")
-
 OBJS     := $(SRCS_S:%.S=$(BUILD_DIR)/%.o) $(SRCS_CXX:%.cc=$(BUILD_DIR)/%.o)
 
 TARGET   := $(BUILD_DIR)/kernel.elf
@@ -43,7 +38,8 @@ QEMUOPTS += -device virtio-blk-device,drive=x0 -global virtio-mmio.force-legacy=
 
 .PHONY: all clean run debug
 
-all: $(TARGET) fs.img
+all: $(TARGET) $(INITCODE_BIN) $(UPROGS) fs.img
+
 
 $(BUILD_DIR)/ulib/%.o: $(SRC_DIR)/ulib/%.c
 	@mkdir -p $(dir $@)
@@ -70,21 +66,26 @@ $(BUILD_DIR)/user/%.o: $(SRC_DIR)/user/%.S
 	@echo "  USER_AS $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 
-
 $(INITCODE_BIN): $(BUILD_DIR)/user/init.o $(ULIB_OBJS) $(USER_LD)
 	@echo "  U_LD    $@"
 	@$(LD) -T $(USER_LD) -o $@.out $(BUILD_DIR)/user/init.o $(ULIB_OBJS)
 	@$(OBJCOPY) -S -O binary $@.out $@
 	@$(OBJDUMP) -S $@.out > $@.asm
 
-$(SH_BIN): $(SH_OBJ) $(ULIB_OBJS) $(USER_LD)
-	@echo "  SH_LD   $@"
-	@$(LD) -T $(USER_LD) -o $@ $(SH_OBJ) $(ULIB_OBJS)
+
+$(BUILD_DIR)/user/%: $(BUILD_DIR)/user/%.o $(ULIB_OBJS) $(USER_LD)
+	@echo "  USER_LD $@"
+	@$(LD) -T $(USER_LD) -o $@ $< $(ULIB_OBJS)
 	@$(OBJDUMP) -S $@ > $@.asm
+	@$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $@.sym
+
 
 $(TARGET): $(OBJS) $(LINKER_SCRIPT)
 	@echo "  K_LD    $@"
 	@$(LD) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
+	@echo "  K_ASM   $@.asm"
+	@$(OBJDUMP) -S $@ > $@.asm
+	@$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $@.sym
 
 $(BUILD_DIR)/src/kernel/initcode.o: $(SRC_DIR)/kernel/initcode.S $(INITCODE_BIN)
 	@mkdir -p $(dir $@)
@@ -101,11 +102,11 @@ $(BUILD_DIR)/%.o: %.cc
 	@echo "  K_CXX   $<"
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
-fs.img: $(SH_BIN)
+fs.img: $(UPROGS)
 	@echo "  IMG     Generating fs.img (FAT32)"
 	@dd if=/dev/zero of=fs.img bs=1M count=32 2>/dev/null
 	@mkfs.vfat -F 32 fs.img >/dev/null
-	@mcopy -i fs.img $(SH_BIN) ::/sh
+	$(foreach prog,$(UPROGS),mcopy -i fs.img $(prog) ::/$(notdir $(prog));)
 
 run: $(TARGET) fs.img
 	@echo "  QEMU    Running..."

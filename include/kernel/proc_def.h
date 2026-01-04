@@ -53,6 +53,7 @@ struct Proc
     struct Proc *parent;
     void *chan;
     int xstate;
+    int killed;
 
     Inode *cwd;
     struct file *ofile[NOFILE];

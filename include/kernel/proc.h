@@ -19,6 +19,8 @@ namespace ProcManager
     void wakeup(void *chan);
 
     int growproc(int n);
+
+    int kill(int pid);
 }
 
 void forkret();

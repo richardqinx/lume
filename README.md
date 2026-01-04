@@ -1,136 +1,140 @@
-# Lume Operating System
+# Lume OS
+**A Lightweight, Educational RISC-V Operating System**
+> Luminescence in the Deep Night
 
-**Lume** is an experimental operating system kernel built from scratch for the **RISC-V 64** architecture. This project aims to explore the core implementation details of a modern Unix-like operating system.
+Lume OS is a 64-bit monolithic operating system kernel written in C++ for the RISC-V architecture. Currently designed for educational purposes and kernel hacking, the project is now evolving towards a Tiny Linux-Compatible Kernel capable of running standard Linux userspace binaries (musl libc, BusyBox, etc.) by implementing the Linux Syscall ABI.
 
-## 🚀 Current Status
-
-The project is currently deep in **Phase 2: Memory & Process Management**.
-
-The kernel has successfully transitioned from the bootloader to supervisor mode, enabled Sv39 virtual memory paging, and supports the execution of the first user-space process (`initcode`). It features basic process lifecycle management (creation, execution, termination, and reclamation).
-
-### ✅ Key Features Implemented
-
-* **Architecture Support**
-    * **Target**: RISC-V 64-bit (Sv39).
-    * **Modes**: Supervisor Mode (S-Mode) and User Mode (U-Mode).
-    * **Boot Flow**: OpenSBI -> Kernel Entry -> Main.
-
-* **Memory Management**
-    * **PMM (Physical Memory Management)**: Page frame allocator based on a free-list structure.
-    * **VM (Virtual Memory)**: Full Sv39 multi-level page table mapping.
-    * **Address Space**:
-        * **Kernel**: Higher-half mapping (Direct Mapping) + Trampoline.
-        * **User**: Independent page tables per process, containing code, data, stack, and trap pages.
-    * **Isolation**: `Trampoline` page mechanism for safe Kernel/User transitions.
-
-* **Process & Scheduling**
-    * **Process Model**: `struct Proc` (PCB) managing independent kernel stacks and trap frames.
-    * **Scheduling**: Preemptive Round-Robin scheduler driven by hardware timer interrupts.
-    * **Context Switching**: Assembly-level `swtch` logic to save/restore callee-saved registers.
-    * **Synchronization**: Spinlocks for protecting critical kernel data structures.
-
-* **System Calls**
-    A syscall dispatch framework (`ecall`) is established, currently supporting:
-    * `SYS_fork`: Create a child process (deep copy of memory and page tables).
-    * `SYS_exit`: Terminate the current process.
-    * `SYS_wait`: Wait for a child process to exit and reap resources.
-    * `SYS_write`: Write output to the console (currently direct via UART).
-    * `SYS_getpid`: Retrieve the current process ID.
-    * `SYS_putc`: Character output for debugging.
-
-* **Drivers**
-    * **UART**: Basic initialization and polled I/O for kernel logging.
-
-## 📂 Project Structure
-
-```text
-Lume/
-├── src/
-│   ├── boot/           # Bootloader code (entry.S)
-│   ├── kernel/         # Core kernel subsystems
-│   │   ├── mm/         # Memory Management (pmm.cc, vm.cc)
-│   │   ├── proc/       # Process Management (proc.cc, swtch.S)
-│   │   ├── trap/       # Interrupt & Exception handling (trap.S, trampoline.S)
-│   │   ├── syscall.cc  # System call dispatcher
-│   │   ├── main.cc     # Kernel entry point
-│   │   └── ...
-│   ├── user/           # User-space programs (init.cc, usys.S)
-│   ├── drivers/        # Hardware drivers (uart.cc)
-│   └── lib/            # Kernel utility libraries (string.cc)
-├── include/            # Header files
-├── Makefile            # Build configuration
-└── link.ld             # Kernel linker script
-```
-
-## 🛠️ Build & Run
-This project relies on the GCC RISC-V toolchain and QEMU emulator.
+## 🛠 Build & Run
 
 ### Prerequisites
-Compiler: riscv64-linux-gnu-gcc / g++
+* Toolchain: `riscv64-linux-gnu-g++` / `gcc`
 
-Emulator: qemu-system-riscv64
+* Emulator: `qemu-system-riscv64`
 
-Build Tool: make
+* Build System: `make`
 
-### Commands
-1. **Compile Kernel & User Programs:**
-
+### Compiling
 ```Bash
+# Compile kernel and user programs
 make all
 ```
-2. **Run in QEMU (No Graphic Mode):**
 
+### Running in QEMU
 ```Bash
+# Run the OS
 make run
-```
-Expected Output: You will see kernel boot logs, page table initialization, and output from the first user process (`initcode`).
 
-3. **Debug Mode (GDB):**
-
-```Bash
+# Debug mode (attaches GDB)
 make debug
 ```
-This starts QEMU in a paused state, waiting for a GDB connection on port 1234.
 
-4. **Clean Build Artifacts:**
+## 🏗 System Architecture & Current Features
+Based on the current source tree, Lume OS implements the following core subsystems:
 
-```Bash
-make clean
-```
+### 1. Kernel Core & Hardware Abstraction
+* Architecture: RISC-V 64-bit (Sv39 paging) targeting QEMU `virt` machine.
 
-## 🗺️ Roadmap
-* [x] Phase 1: Foundation
+* Boot: Device Tree (FDT) parsing for hardware discovery.
 
-    [x] UART Driver & Formatted Output.
+* Concurrency: SMP (Symmetric Multi-Processing) support with per-CPU state management.
 
-    [x] Physical Memory Allocator (PMM).
+* Traps: Supervisor-mode interrupt and exception handling.
 
-    [x] Basic Interrupt Handling Framework.
+### 2. Memory Management
+* Physical Memory: Buddy System allocator for page-level management.
 
-* [x] Phase 2: Memory & Process (In Progress)
+* Kernel Heap: SLAB allocator (`kmalloc`/`kfree`) for efficient object management.
 
-    [x] Virtual Memory (Sv39) & Kernel Page Tables.
+* Virtual Memory: Basic paging support. Current user process memory model is linear (heap grows contiguously via `sbrk`).
 
-    [x] User Address Space Construction.
+### 3. Process Management
+* Scheduling: Round-Robin scheduler with per-CPU runqueues and work stealing mechanisms.
 
-    [x] Preemptive Scheduler.
+* Context Switching: Saves callee-saved registers; currently lacks FPU/Vector state saving.
 
-    [x] Basic System Calls (fork, exit, wait, write).
+* Lifecycle: Basic `fork`, `exec`, `exit`, and `wait` system calls.
 
-    [ ] exec System Call (ELF Loader).
+### 4. File System & I/O
+* VFS: A preliminary Virtual File System abstraction with `inode` polymorphism.
 
-    [ ] sbrk for Dynamic Heap Growth.
+* Filesystem: FAT32 implementation with basic read/write/create/delete support.
 
-* [ ] Phase 3: File System & I/O (Planned)
+* Buffer Cache: Block-level caching (Bio) coupled with the VirtIO driver.
 
-    [ ] VirtIO Block Device Driver.
+* Drivers:
 
-    [ ] Virtual File System (VFS).
+    * VirtIO: Block device driver (MMIO).
 
-    [ ] File I/O System Calls (open, read, close).
-* [ ] Phase 4: Waiting for you...
+    * UART: 16550A-compatible serial console driver with line buffering.
+
+    * PLIC: Platform-Level Interrupt Controller support.
+
+### 5. User Space
+* Libc: A minimal custom C library (`ulib`) providing stdio (`printf`/`scanf`), stdlib (`malloc`/`free`), and string operations.
+
+* Shell: A functional shell (`sh`) supporting pipes (`|`), redirection (`<`, `>`), and background execution (`&`).
+
+* Utils: Standard Unix-like tools: `ls`, `cat`, `echo`, `mkdir`, `rm`, `touch`, `cp`, `mv`.
+
+## 📉 Gap Analysis: Lume OS vs. Linux
+To achieve the goal of binary compatibility with the Linux ecosystem, Lume OS is currently undergoing a major refactoring. The following table highlights the critical differences:
+
+|Subsystem|Lume OS (Current)|Linux / Modern Goal|Gap & Impact|
+|:------:|:---------:|:--------:|:---------:|
+|Syscall ABI|Custom IDs & `-1` return codes|Standard RISC-V headers & `-errno`|Binaries compiled for Linux cannot run on Lume.|
+|Memory Model|Linear `p->sz` (Heap only)|VMA (Virtual Memory Areas)|Cannot support `mmap`, memory gaps, or dynamic libraries (`.so`).|
+|Binary Format|Static ELF only|Dynamic ELF (`PT_INTERP`)|Cannot run `ld.so` or shared libraries; high memory waste.|
+|Threading|Single-threaded Processes|1:1 Threads (`clone` + NPTL)|Cannot support `pthreads` or modern concurrent apps.|
+|Filesystem|Tightly coupled FAT32|VFS + Mount Points + Pseudo FS|Missing `/dev`, `/proc`, `/sys`; standard tools (`top`, `ps`) fail.|
+|Signals|Basic `kill` flag|Full Signal Handling|No `Ctrl-C` handling, `SIGSEGV` recovery, or async notifications.|
+|I/O Model|Synchronous/Blocking|Async/Non-blocking (`poll`/`epoll`)|Cannot support high-performance servers (e.g., Nginx).|
+
+## 🗺️ Roadmap to Linux Compatibility
+We are executing a 4-phase plan to transform Lume OS into a Tiny Linux Clone.
+
+### Phase 1: Core Architecture Refactoring (The Foundation)
+* [ ] VMA Implementation: Replace `sz` with `vm_area_struct` (RB-Tree/List) to support mmap and demand paging.
+
+* [ ] VFS 2.0: Decouple FAT32. Implement `struct mount`, `dentry` cache, and `RamFS`.
+
+* [ ] DevFS & ProcFS: Implement `/dev` and `/proc` mounting support.
+
+* [ ] Syscall Alignment: Renumber syscalls to match Linux RISC-V 64 ABI and standardize errno.
+
+### Phase 2: Runtime Environment
+* [ ] ELF Interpreter: Support `PT_INTERP` to load dynamic linkers (`ld-musl-riscv64.so.1`).
+
+* [ ] Auxiliary Vector: Construct `AT_RANDOM`, `AT_PHDR`, etc., on the user stack.
+
+* [ ] New Syscalls: `brk`, `writev`, `readv`, `ioctl` (TTY), `getdents64`.
+
+### Phase 3: Advanced Process Features
+* [ ] Threading: Implement `sys_clone` with `CLONE_VM` / `CLONE_THREAD`.
+
+* [ ] Synchronization: Implement `sys_futex` for userspace locking.
+
+* [ ] Signals: Implement `sigaction`, signal frame construction, and `sigreturn` trampoline.
+
+### Phase 4: Ecosystem & Networking
+* [ ] Network Stack: Port lwIP and implement `virtio-net` driver.
+
+* [ ] Socket API: Implement `socket`, `bind`, `connect`, `poll`.
+
+* [ ] Userland: Port Musl Libc and BusyBox.
 
 ## 📄 License
-This project is open-source under the MIT License. See the LICENSE file for details.
-------------
-Copyright (c) 2025 Richard Qin
+
+Lume OS is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 2 of the License, or
+(at your option) any later version.
+
+Lume OS is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+See the [LICENSE](LICENSE) file for details.

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2026 Richard QIn
+ */
+
 #ifndef _CTYPE_H
 #define _CTYPE_H
 

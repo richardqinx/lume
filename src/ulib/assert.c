@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2026 Richard QIn
+ */
 #include "stdio.h"
 #include "stdlib.h"
 

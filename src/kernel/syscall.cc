@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2026 Richard QIn
+ */
 #include "kernel/syscall.h"
 #include "common/types.h"
 #include "common/fcntl.h"

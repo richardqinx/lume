@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2026 Richard QIn
+ */
 #include "kernel/trap.h"
 #include "kernel/riscv.h"
 #include "kernel/proc.h"

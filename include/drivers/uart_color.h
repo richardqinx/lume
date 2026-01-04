@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2026 Richard QIn
+ */
+
 // ANSI Escape Codes for Modern Terminal Colors
 #define ANSI_RESET "\033[0m"
 #define ANSI_RED "\033[31m"

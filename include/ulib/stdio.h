@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2026 Richard QIn
+ */
 /* Standard I/O Library for Lume OS */
 
 #ifndef _STDIO_H

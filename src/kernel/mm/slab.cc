@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2026 Richard QIn
+ */
 #include "kernel/slab.h"
 #include "kernel/pmm.h"
 #include "kernel/spinlock.h"

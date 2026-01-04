@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Copyright (C) 2026 Richard QIn
+ */
 #ifndef _ULIB_TYPES_H
 #define _ULIB_TYPES_H
 

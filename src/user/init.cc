@@ -12,7 +12,7 @@ int main()
 {
     char *argv[] = {(char *)"sh", 0};
 
-    printf(ANSI_BLUE"\n[Init] Starting Lume OS Shell..."ANSI_RESET);
+    printf(ANSI_BLUE "\n[Init] Starting Lume OS Shell..." ANSI_RESET);
     printf("\n");
 
     while (1)

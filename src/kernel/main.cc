@@ -20,8 +20,12 @@
 #include "fs/fat32.h"
 #include "lib/string.h"
 
-extern void fdt_init(uint64 dtb);
+#include "kernel/fdt.h" // fdt_parse
+
 extern uint64 g_dtb_addr;
+
+// Placement new support (referenced from cxx.cc)
+void *operator new(unsigned long size, void *ptr);
 
 volatile static int started = 0;
 
@@ -29,7 +33,7 @@ extern "C" void kernel_main(uint64 hartid, uint64 dtb)
 {
     if (hartid == 0)
     {
-        fdt_init(dtb);
+        fdt_parse(dtb);
 
         Drivers::uart_init();
         Drivers::uart_puts("\n[Lume OS] Booting...\n");
@@ -47,6 +51,9 @@ extern "C" void kernel_main(uint64 hartid, uint64 dtb)
         VirtIO::init();
         BufferCache::init();
         VFS::init();
+        // Initialize global FAT32 object manually (global constructors not supported yet)
+        new (&fat32_fs) FAT32FileSystem();
+        VFS::register_fs(&fat32_fs);
         FileTable::init();
         Timer::init();
         ProcManager::init();      // Process Management

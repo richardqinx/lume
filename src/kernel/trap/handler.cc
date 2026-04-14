@@ -11,6 +11,7 @@
 #include "kernel/timer.h"
 #include "drivers/plic.h"
 #include "drivers/virtio.h"
+#include "kernel/fdt.h"
 #include "lib/string.h"
 
 
@@ -66,17 +67,23 @@ namespace Trap
             // Supervisor External Interrupt (IRQ 9)
             int irq = PLIC::claim();
 
-            if (irq == 10)
+            if (irq == (int)g_devices.uart.irq)
             {
                 Drivers::uart_intr();
-                // Debug
-                // Drivers::uart_puts("[Interrupt] UART Input detected!\n");
             }
-            else if (irq >= 1 && irq <= 8)
+            else
             {
-                VirtIO::intr();
-                // Debug
-                // Drivers::uart_puts("[Interrupt] VirtIO disk finished!\n");
+                // Check if it's a VirtIO IRQ
+                bool handled = false;
+                for (int i = 0; i < g_devices.virtio_count; i++)
+                {
+                    if (irq == (int)g_devices.virtio[i].irq)
+                    {
+                        VirtIO::intr();
+                        handled = true;
+                        break;
+                    }
+                }
             }
 
             if (irq > 0)

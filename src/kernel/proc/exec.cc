@@ -11,7 +11,6 @@
 #include "lib/string.h"
 #include "drivers/uart.h"
 #include "kernel/trap.h"
-#include "drivers/uart.h"
 
 extern char trampoline[];
 
@@ -74,7 +73,10 @@ static int loadseg(uint64 *pagetable, uint64 va, Inode *ip, uint64 offset, uint6
     {
         uint64 pa = VM::walkaddr(pagetable, va + i);
         if (pa == 0)
+        {
+            Drivers::uart_puts("[Exec Debug] loadseg: walkaddr failed\n");
             return -1;
+        }
 
         uint64 n = PGSIZE - (va + i) % PGSIZE;
         if (i + n > sz)
@@ -82,7 +84,10 @@ static int loadseg(uint64 *pagetable, uint64 va, Inode *ip, uint64 offset, uint6
 
         // Read physical address (isUser=0)
         if (ip->read((char *)(pa + (va + i) % PGSIZE), offset + i, n, 0) != (int)n)
+        {
+            Drivers::uart_puts("[Exec Debug] loadseg: read failed\n");
             return -1;
+        }
     }
     return 0;
 }
@@ -91,29 +96,48 @@ namespace Exec
 {
     int exec(char *path, char **argv)
     {
-        // Get Inode
+        // 1. Get Inode
         Inode *raw_ip = VFS::namei(path);
         if (!raw_ip)
+        {
+            Drivers::uart_puts("[Exec Debug] namei failed for path: ");
+            Drivers::uart_puts(path);
+            Drivers::uart_puts("\n");
             return -1;
+        }
         InodeGuard iguard(raw_ip);
 
         // Get ELF head
         struct elfhdr elf;
         if (raw_ip->read((char *)&elf, 0, sizeof(elf), 0) != sizeof(elf))
+        {
+            Drivers::uart_puts("[Exec Debug] read elf header failed\n");
             return -1;
+        }
         if (elf.magic != ELF_MAGIC)
+        {
+            Drivers::uart_puts("[Exec Debug] invalid elf magic\n");
             return -1;
+        }
+
         // Create new pagetable
         VmGuard vm_guard;
         if (!vm_guard.pagetable)
+        {
+            Drivers::uart_puts("[Exec Debug] uvmcreate failed\n");
             return -1;
+        }
+
         // Load Program Segment
         struct proghdr ph;
         for (int i = 0; i < elf.phnum; i++)
         {
             uint64 off = elf.phoff + i * sizeof(ph);
             if (raw_ip->read((char *)&ph, off, sizeof(ph), 0) != sizeof(ph))
+            {
+                Drivers::uart_puts("[Exec Debug] read proghdr failed\n");
                 return -1;
+            }
 
             if (ph.type != ELF_PROG_LOAD)
                 continue;
@@ -124,7 +148,10 @@ namespace Exec
 
             uint64 sz1 = VM::uvmalloc(vm_guard.pagetable, vm_guard.sz, ph.vaddr + ph.memsz, PTE_W | PTE_X | PTE_R | PTE_U);
             if (sz1 == 0)
+            {
+                Drivers::uart_puts("[Exec Debug] uvmalloc failed (segment)\n");
                 return -1;
+            }
             vm_guard.sz = sz1;
 
             if (loadseg(vm_guard.pagetable, ph.vaddr, raw_ip, ph.off, ph.filesz) < 0)
@@ -139,10 +166,13 @@ namespace Exec
 
         uint64 sz1 = VM::uvmalloc(vm_guard.pagetable, sz, sz + stack_total_pages * PGSIZE, PTE_W | PTE_R | PTE_U);
         if (sz1 == 0)
+        {
+            Drivers::uart_puts("[Exec Debug] uvmalloc failed (stack)\n");
             return -1;
+        }
         vm_guard.sz = sz1;
 
-        VM::uvmunmap(vm_guard.pagetable, sz, 1, 0); // protected pagetable
+        VM::uvmunmap(vm_guard.pagetable, sz, 1, 0);
 
         uint64 sp = sz1;
         uint64 stackbase = sp - stack_data_pages * PGSIZE;
@@ -157,10 +187,16 @@ namespace Exec
             sp -= strlen(argv[argc]) + 1;
             sp -= sp % 16;
             if (sp < stackbase)
+            {
+                Drivers::uart_puts("[Exec Debug] stack overflow (args)\n");
                 return -1;
+            }
 
             if (VM::copyout(vm_guard.pagetable, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
+            {
+                Drivers::uart_puts("[Exec Debug] copyout arg string failed\n");
                 return -1;
+            }
             ustack[argc] = sp;
         }
         ustack[argc] = 0;
@@ -169,25 +205,32 @@ namespace Exec
         sp -= (argc + 1) * sizeof(uint64);
         sp -= sp % 16;
         if (sp < stackbase)
+        {
+            Drivers::uart_puts("[Exec Debug] stack overflow (argv array)\n");
             return -1;
+        }
         if (VM::copyout(vm_guard.pagetable, sp, (char *)ustack, (argc + 1) * sizeof(uint64)) < 0)
+        {
+            Drivers::uart_puts("[Exec Debug] copyout argv array failed\n");
             return -1;
+        }
 
         // Commit Changes
         struct Proc *p = myproc();
         if (VM::mappages(vm_guard.pagetable, TRAPFRAME, PGSIZE, (uint64)p->tf, PTE_R | PTE_W) < 0)
+        {
+            Drivers::uart_puts("[Exec Debug] mappages TRAPFRAME failed\n");
             return -1;
+        }
 
         uint64 oldsz = p->sz;
         uint64 *oldpagetable = p->pagetable;
 
-        // setup Trapframe
         p->tf->a0 = argc;
         p->tf->a1 = sp;
         p->tf->sp = sp;
         p->tf->epc = elf.entry;
 
-        // update process name
         char *s = path, *last = path;
         while (*s)
         {
@@ -195,7 +238,7 @@ namespace Exec
                 last = s + 1;
             s++;
         }
-        // memmove(p->name, last, sizeof(p->name));
+
         size_t len = 0;
         while (last[len] && len < sizeof(p->name) - 1)
         {
@@ -210,7 +253,6 @@ namespace Exec
 
         // release old pagetable
         VM::uvmfree(oldpagetable, oldsz);
-
         asm volatile("fence.i");
 
         return 0; // iguard unlocks and releases IP upon destruction

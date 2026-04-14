@@ -8,6 +8,7 @@
 #include "common/types.h"
 #include "lib/string.h"
 #include "drivers/uart.h"
+#include "kernel/fdt.h"
 
 extern "C"
 {
@@ -421,9 +422,15 @@ namespace VM
     {
         kernel_pagetable = uvmcreate();
 
-        kvmmap(0x10000000, 0x10000000, 0x10000, PTE_R | PTE_W);
-        kvmmap(0x0c000000, 0x0c000000, 0x400000, PTE_R | PTE_W);
-        kvmmap(0x02000000, 0x02000000, 0x10000, PTE_R | PTE_W); // CLINT
+        // 1. Map all device MMIO regions discovered by FDT
+        for (int i = 0; i < g_devices.mmio_count; i++)
+        {
+            uint64 base = g_devices.mmio_regions[i].base;
+            uint64 size = g_devices.mmio_regions[i].size;
+            kvmmap(base, base, size, PTE_R | PTE_W);
+        }
+
+        // 2. Map Kernel Memory (PHYSTOP is now dynamic based on FDT)
         kvmmap(KERNBASE, KERNBASE, PHYSTOP - KERNBASE, PTE_R | PTE_W | PTE_X);
     }
 

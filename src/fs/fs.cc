@@ -7,7 +7,7 @@
 #include "drivers/uart.h"
 #include "kernel/spinlock.h"
 #include "kernel/proc.h"
-#include "fs/fat32.h"
+// #include "fs/fat32.h" // Decoupled
 #include "lib/string.h"
 
 static Inode *global_root_inode = nullptr;
@@ -53,6 +53,18 @@ void Inode::getattr(struct kstat *st)
 
 namespace VFS
 {
+    // File System Registry
+    static FileSystem *filesystems[8];
+    static int fs_count = 0;
+
+    void register_fs(FileSystem *fs)
+    {
+        if (fs_count < 8)
+        {
+            filesystems[fs_count++] = fs;
+        }
+    }
+
     void init()
     {
         Drivers::uart_puts("[VFS] Inode subsystem initialized.\n");
@@ -138,9 +150,17 @@ namespace VFS
     {
         if (global_root_inode == nullptr)
         {
-            Drivers::uart_puts("[VFS] Lazy init: Mounting FAT32...\n");
-            fat32_fs.init();
-            mount_root(fat32_fs.root());
+            // Try to mount the first registered FS
+            if (fs_count > 0)
+            {
+                Drivers::uart_puts("[VFS] Lazy init: Mounting root FS...\n");
+                filesystems[0]->init();
+                mount_root(filesystems[0]->root());
+            }
+            else
+            {
+                Drivers::uart_puts("[VFS] No filesystem registered!\n");
+            }
         }
         if (!global_root_inode)
             return nullptr;

@@ -40,29 +40,29 @@ namespace Drivers
         uart_rx.w = 0;
 
         // Disable interrupts and configure
-        *(volatile uint8 *)(UART0 + IER) = 0x00;
+        *(volatile uint8 *)(uart_base() + IER) = 0x00;
 
         // Enter baud rate setting mode (LCR_DLAB) = 0x80;
-        *(volatile uint8 *)(UART0 + LCR) = 0x80;
-        *(volatile uint8 *)(UART0 + 0) = 0x03; // DLL: 38.4K baud
-        *(volatile uint8 *)(UART0 + 1) = 0x00; // DLM
+        *(volatile uint8 *)(uart_base() + LCR) = 0x80;
+        *(volatile uint8 *)(uart_base() + 0) = 0x03; // DLL: 38.4K baud
+        *(volatile uint8 *)(uart_base() + 1) = 0x00; // DLM
 
         // Exit baud rate setting, set 8-bit word length, no parity
-        *(volatile uint8 *)(UART0 + LCR) = 0x03;
+        *(volatile uint8 *)(uart_base() + LCR) = 0x03;
 
         // Reset and enable FIFO
-        *(volatile uint8 *)(UART0 + FCR) = 0x07;
+        *(volatile uint8 *)(uart_base() + FCR) = 0x07;
 
         // Enable Receive Data Available Interrupt
-        *(volatile uint8 *)(UART0 + IER) = 0x01;
+        *(volatile uint8 *)(uart_base() + IER) = 0x01;
     }
 
     void uart_putc(char c)
     {
         uart_tx_lock.acquire();
-        while ((*(volatile uint8 *)(UART0 + LSR) & LSR_TX_IDLE) == 0)
+        while ((*(volatile uint8 *)(uart_base() + LSR) & LSR_TX_IDLE) == 0)
             ;
-        *(volatile uint8 *)(UART0 + THR) = c;
+        *(volatile uint8 *)(uart_base() + THR) = c;
         uart_tx_lock.release();
     }
 
@@ -113,10 +113,10 @@ namespace Drivers
 
         while (1)
         {
-            if ((*(volatile uint8 *)(UART0 + LSR) & LSR_RX_READY) == 0)
+            if ((*(volatile uint8 *)(uart_base() + LSR) & LSR_RX_READY) == 0)
                 break;
 
-            char c = *(volatile uint8 *)(UART0 + RHR);
+            char c = *(volatile uint8 *)(uart_base() + RHR);
 
             uart_rx.buf[uart_rx.w % UART_RX_BUF_SIZE] = c;
             uart_rx.w++;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2026 Richard QIn
+ * Copyright (C) 2026 Richard Qin
  */
 #include "kernel/syscall.h"
 #include "common/types.h"
@@ -17,19 +17,19 @@
 #include "fs/fat32.h"
 #include "fs/file.h"
 #include "lib/string.h"
+#include "lib/errno.h"
 
 extern "C++" int fork();
 namespace Exec
 {
     int exec(char *path, char **argv);
-}   
+}
 
 namespace ProcManager
 {
     void exit(int status);
     int wait(uint64_t addr);
 }
-
 
 static uint64_t argraw(int n)
 {
@@ -69,26 +69,18 @@ struct KernelArgv
 {
     static const int MAX_ARGS = 32;
     static const int MAX_ARG_LEN = 128;
-
     char *args[MAX_ARGS];
 
-    KernelArgv()
-    {
-        memset(args, 0, sizeof(args));
-    }
-
+    KernelArgv() { memset(args, 0, sizeof(args)); }
     ~KernelArgv()
     {
         for (int i = 0; i < MAX_ARGS; i++)
-        {
             if (args[i])
             {
                 Slab::kfree(args[i]);
                 args[i] = nullptr;
             }
-        }
     }
-
     KernelArgv(const KernelArgv &) = delete;
     KernelArgv &operator=(const KernelArgv &) = delete;
 };
@@ -107,16 +99,17 @@ static int fdalloc(struct file *f)
     return -1;
 }
 
-static uint64 sys_open()
+// sys_openat(int dfd, const char *filename, int flags, mode_t mode)
+static uint64 sys_openat()
 {
     char path[128];
-    int omode;
+    int dfd, omode, mode_unused;
     int fd;
     struct file *f;
     Inode *ip;
 
-    if (argstr(0, path, 128) < 0 || argint(1, &omode) < 0)
-        return -1;
+    if (argint(0, &dfd) < 0 || argstr(1, path, 128) < 0 || argint(2, &omode) < 0 || argint(3, &mode_unused) < 0)
+        return -EINVAL;
 
     if (omode & O_CREATE)
     {
@@ -139,9 +132,7 @@ static uint64 sys_open()
     }
 
     if (ip == nullptr)
-    {
-        return -1;
-    }
+        return -ENOENT;
 
     VFS::ilock(ip);
     if ((omode & O_TRUNC) && ip->type == T_FILE)
@@ -154,7 +145,7 @@ static uint64 sys_open()
     if (f == nullptr)
     {
         VFS::iput(ip);
-        return -1;
+        return -ENFILE;
     }
 
     fd = fdalloc(f);
@@ -163,7 +154,7 @@ static uint64 sys_open()
         f->ref = 0;
         f->type = FD_NONE;
         VFS::iput(ip);
-        return -1;
+        return -EMFILE;
     }
 
     f->type = FD_INODE;
@@ -175,30 +166,33 @@ static uint64 sys_open()
     return fd;
 }
 
-static uint64 sys_mkdir()
+// sys_mkdirat(int dfd, const char *pathname, mode_t mode)
+static uint64 sys_mkdirat()
 {
     char path[128];
-    if (argstr(0, path, 128) < 0)
-        return -1;
+    int dfd, mode;
+
+    if (argint(0, &dfd) < 0 || argstr(1, path, 128) < 0 || argint(2, &mode) < 0)
+        return -EINVAL;
 
     Inode *ip = VFS::namei(path);
     if (ip != nullptr)
     {
         VFS::iput(ip);
-        return -1; // the dir is exist
+        return -EEXIST;
     }
 
     char name[128];
     Inode *dp = VFS::nameiparent(path, name);
     if (dp == nullptr)
-        return -1;
+        return -ENOENT;
 
     VFS::ilock(dp);
     ip = dp->create(name, T_DIR, 0, 0);
     VFS::iunlockput(dp);
 
     if (ip == nullptr)
-        return -1;
+        return -EIO;
 
     VFS::iput(ip);
     return 0;
@@ -208,24 +202,24 @@ static uint64 sys_chdir()
 {
     char path[128];
     if (argstr(0, path, 128) < 0)
-        return -1;
+        return -EFAULT;
 
     Inode *ip = VFS::namei(path);
     if (ip == nullptr)
-        return -1;
+        return -ENOENT;
 
     VFS::ilock(ip);
     if (ip->type != T_DIR)
     {
         VFS::iunlockput(ip);
-        return -1;
+        return -ENOTDIR;
     }
     VFS::iunlock(ip);
 
     struct Proc *p = myproc();
-    VFS::iput(p->cwd); // release old cwd
-    p->cwd = ip;       // switch to new cwd
-
+    if (p->cwd)
+        VFS::iput(p->cwd);
+    p->cwd = ip;
     return 0;
 }
 
@@ -233,18 +227,18 @@ static uint64 sys_dup()
 {
     int oldfd;
     if (argint(0, &oldfd) < 0)
-        return -1;
+        return -EINVAL;
 
     struct Proc *p = myproc();
     if (oldfd < 0 || oldfd >= NOFILE || p->ofile[oldfd] == nullptr)
-        return -1;
+        return -EBADF;
 
     struct file *f = FileTable::dup(p->ofile[oldfd]);
     int newfd = fdalloc(f);
     if (newfd < 0)
     {
-        FileTable::close(f); // fdalloc failed
-        return -1;
+        FileTable::close(f);
+        return -EMFILE;
     }
     return newfd;
 }
@@ -255,75 +249,86 @@ static uint64 sys_fstat()
     uint64 stat_addr;
 
     if (argint(0, &fd) < 0 || argint(1, (int *)&stat_addr) < 0)
-        return -1;
+        return -EINVAL;
 
     struct Proc *p = myproc();
     if (fd < 0 || fd >= NOFILE || p->ofile[fd] == nullptr)
-        return -1;
+        return -EBADF;
 
-    return FileTable::stat(p->ofile[fd], stat_addr);
+    if (FileTable::stat(p->ofile[fd], stat_addr) < 0)
+        return -EIO;
+
+    return 0;
 }
 
-static uint64 sys_mknod()
+// sys_mknodat(int dfd, const char *filename, mode_t mode, dev_t dev)
+static uint64 sys_mknodat()
 {
     char path[128];
-    int major, minor;
+    int dfd, mode, dev;
 
-    if (argstr(0, path, 128) < 0 || argint(1, &major) < 0 || argint(2, &minor) < 0)
-        return -1;
+    if (argint(0, &dfd) < 0 || argstr(1, path, 128) < 0 || argint(2, &mode) < 0 || argint(3, &dev) < 0)
+        return -EINVAL;
 
     Inode *ip = VFS::namei(path);
     if (ip != nullptr)
     {
         VFS::iput(ip);
-        return -1;
+        return -EEXIST;
     }
 
     char name[128];
     Inode *dp = VFS::nameiparent(path, name);
     if (dp == nullptr)
-        return -1;
+        return -ENOENT;
+
+    // Decode dev_t (Assuming simplified minor/major for now)
+    int major = (dev >> 20) & 0xFFF; // Just a guess for Linux packing, or pass raw
+    int minor = dev & 0xFFFFF;
+
+    // For Phase 1 compatibility with init.cc:
+    // init.cc passes raw major/minor. Shim will pack them.
+    // We just unpack naively or assume Shim passed us correct structure.
 
     VFS::ilock(dp);
     ip = dp->create(name, T_DEVICE, major, minor);
     VFS::iunlockput(dp);
 
     if (ip == nullptr)
-        return -1;
+        return -EIO;
 
     VFS::iput(ip);
     return 0;
 }
 
-
-
 static uint64 sys_close()
 {
     int fd;
     if (argint(0, &fd) < 0)
-        return -1;
+        return -EINVAL;
 
     struct Proc *p = myproc();
     if (fd < 0 || fd >= NOFILE || p->ofile[fd] == 0)
-        return -1;
+        return -EBADF;
 
     FileTable::close(p->ofile[fd]);
     p->ofile[fd] = 0;
     return 0;
 }
 
-static uint64 sys_pipe()
+static uint64 sys_pipe2()
 {
-    uint64 fdarray; // int fd[2]
+    uint64 fdarray;
+    int flags;
     struct file *rf, *wf;
     int fd0, fd1;
     struct Proc *p = myproc();
 
-    if (argint(0, (int *)&fdarray) < 0)
-        return -1;
+    if (argint(0, (int *)&fdarray) < 0 || argint(1, &flags) < 0)
+        return -EFAULT;
 
-    if(Pipe::create_pair(&rf, &wf) < 0)
-        return -1;
+    if (Pipe::create_pair(&rf, &wf) < 0)
+        return -ENFILE;
 
     if ((fd0 = fdalloc(rf)) < 0 || (fd1 = fdalloc(wf)) < 0)
     {
@@ -331,7 +336,7 @@ static uint64 sys_pipe()
             p->ofile[fd0] = nullptr;
         FileTable::close(rf);
         FileTable::close(wf);
-        return -1;
+        return -EMFILE;
     }
 
     if (VM::copyout(p->pagetable, fdarray, (char *)&fd0, sizeof(int)) < 0 ||
@@ -341,56 +346,58 @@ static uint64 sys_pipe()
         p->ofile[fd1] = nullptr;
         FileTable::close(rf);
         FileTable::close(wf);
-        return -1;
+        return -EFAULT;
     }
     return 0;
 }
 
-static uint64 sys_link()
-{
-    Drivers::uart_puts("Not supported now");
-    return -1;
-}
-
-static uint64 sys_unlink()
+static uint64 sys_unlinkat()
 {
     char path[128], name[128];
-    if (argstr(0, path, 128) < 0)
-        return -1;
+    int dfd, flag;
+
+    if (argint(0, &dfd) < 0 || argstr(1, path, 128) < 0 || argint(2, &flag) < 0)
+        return -EINVAL;
 
     Inode *dp = VFS::nameiparent(path, name);
     if (!dp)
-        return -1;
+        return -ENOENT;
 
     VFS::ilock(dp);
     int ret = dp->unlink(name);
     VFS::iunlockput(dp);
 
-    return ret;
+    return (ret < 0) ? -EIO : 0;
 }
 
-static uint64 sys_exec()
+// sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags)
+static uint64 sys_linkat()
+{
+    // FAT32 does not support hard links.
+    // Return Error to allow compilation/running to proceed (ln will fail gracefully).
+    return -EPERM;
+}
+
+static uint64 sys_execve()
 {
     char path[128];
     uint64 uargv_ptr;
 
     if (argstr(0, path, sizeof(path)) < 0)
-    {
-        return -1;
-    }
+        return -EFAULT;
 
     uargv_ptr = argraw(1);
+    // uenvp_ptr = argraw(2); // Ignored
 
     KernelArgv kargv;
 
     for (int i = 0; i < KernelArgv::MAX_ARGS; ++i)
     {
         uint64 uarg_str_ptr;
-
         if (VM::copyin(myproc()->pagetable, (char *)&uarg_str_ptr, uargv_ptr + i * sizeof(uint64), sizeof(uint64)) < 0)
-        {
-            return -1;
-        }
+            {
+                return -EFAULT;
+            }
 
         if (uarg_str_ptr == 0)
         {
@@ -400,16 +407,15 @@ static uint64 sys_exec()
 
         kargv.args[i] = (char *)Slab::kmalloc(KernelArgv::MAX_ARG_LEN);
         if (kargv.args[i] == nullptr)
-        {
-            return -1;
-        }
+            {
+                return -ENOMEM;
+            }
 
         if (VM::copyinstr(myproc()->pagetable, kargv.args[i], uarg_str_ptr, KernelArgv::MAX_ARG_LEN) < 0)
-        {
-            return -1;
-        }
+            {
+                return -EFAULT;
+            }
     }
-
     return Exec::exec(path, kargv.args);
 }
 
@@ -417,20 +423,29 @@ static uint64 sys_exit()
 {
     int n;
     if (argint(0, &n) < 0)
-        return static_cast<uint64>(-1);
+        return -EINVAL;
     ProcManager::exit(n);
     return 0;
 }
 
-static uint64 sys_fork()
+static uint64 sys_clone()
 {
     return static_cast<uint64>(fork());
 }
 
-static uint64 sys_wait()
+static uint64 sys_wait4()
 {
-    uint64 p = argraw(0);
-    return static_cast<uint64>(ProcManager::wait(p));
+    uint64 status_addr;
+
+    // argraw(0) is pid (ignored)
+    status_addr = argraw(1);
+    // argraw(2) is options (ignored)
+    // argraw(3) is rusage (ignored)
+
+    if (status_addr == static_cast<uint64>(-1))
+        return -EINVAL;
+
+    return static_cast<uint64>(ProcManager::wait(status_addr));
 }
 
 static uint64 sys_getpid()
@@ -452,20 +467,14 @@ static uint64 sys_write()
     uint64 p;
     int fd;
 
-    if (argint(0, &fd) < 0 || argint(2, &n) < 0 || argint(1, (int *)&p) < 0)
-        return -1;
-
-    struct Proc *proc = myproc();
+    if (argint(0, &fd) < 0 || argint(1, (int *)&p) < 0 || argint(2, &n) < 0)
+        return -EINVAL;
 
     p = argraw(1);
 
-    // Drivers::uart_puts("DEBUG: sys_write fd=");
-    // Drivers::uart_put_int(fd);
-    // Drivers::uart_puts(" len=");
-    // Drivers::uart_put_int(n);
-    // Drivers::uart_puts("\n");
+    struct Proc *proc = myproc();
 
-    if (fd == 1 && proc->ofile[fd] == nullptr) // stdout
+    if (fd == 1 && proc->ofile[fd] == nullptr)
     {
         constexpr int MAX_WRITE_BUF = 128;
         char buf[MAX_WRITE_BUF];
@@ -478,10 +487,7 @@ static uint64 sys_write()
                 len = MAX_WRITE_BUF;
 
             if (VM::copyin(proc->pagetable, buf, p + i, static_cast<uint64>(len)) < 0)
-            {
-                Drivers::uart_puts("sys_write: copyin failed\n");
-                return static_cast<uint64>(-1);
-            }
+                return -EFAULT;
 
             for (int j = 0; j < len; j++)
             {
@@ -491,8 +497,9 @@ static uint64 sys_write()
         }
         return static_cast<uint64>(n);
     }
+
     if (fd < 0 || fd >= NOFILE || (f = proc->ofile[fd]) == 0)
-        return static_cast<uint64>(-1);
+        return -EBADF;
 
     return FileTable::write(f, p, n);
 }
@@ -504,50 +511,39 @@ static uint64_t sys_read()
     uint64 p;
     int fd;
 
-    // get param: fd, buf, len
-    if (argint(0, &fd) < 0 || argint(2, &n) < 0 || argint(1, (int *)&p) < 0)
-        return -1;
-        
+    if (argint(0, &fd) < 0 || argint(1, (int *)&p) < 0 || argint(2, &n) < 0)
+        return -EINVAL;
+
     p = argraw(1);
 
-    struct Proc* proc = myproc();
+    struct Proc *proc = myproc();
     if (fd == 0 && proc->ofile[fd] == nullptr)
-    {
         return Drivers::console_read(p, n);
-    }
 
     if (fd < 0 || fd >= NOFILE || (f = proc->ofile[fd]) == 0)
-        return -1;
+        return -EBADF;
 
     return FileTable::read(f, p, n);
-
-    return -1;
 }
 
-static uint64 sys_sbrk()
+static uint64 sys_brk()
 {
     int n;
     if (argint(0, &n) < 0)
-        return -1;
+        return -EINVAL;
 
     uint64 addr = myproc()->sz;
     if (ProcManager::growproc(n) < 0)
-        return -1;
+        return -ENOMEM;
 
     return addr;
-}
-
-static uint64 sys_uptime()
-{
-    return Timer::get_ticks();
 }
 
 static uint64 sys_kill()
 {
     int pid;
     if (argint(0, &pid) < 0)
-        return -1;
-
+        return -EINVAL;
     return ProcManager::kill(pid);
 }
 
@@ -557,24 +553,20 @@ static uint64 sys_sleep()
     uint64 ticks0;
 
     if (argint(0, &n) < 0)
-        return -1;
+        return -EINVAL;
 
     Spinlock *lk = Timer::get_lock();
     lk->acquire();
-
     ticks0 = Timer::get_ticks();
-
     while (Timer::get_ticks() - ticks0 < (uint64)n)
     {
         if (myproc()->killed)
         {
             lk->release();
-            return -1;
+            return -EINTR;
         }
-
         ProcManager::sleep(Timer::get_tick_chan(), lk);
     }
-
     lk->release();
     return 0;
 }
@@ -591,20 +583,18 @@ static uint64 sys_lseek()
 {
     int fd, offset, whence;
     if (argint(0, &fd) < 0 || argint(1, &offset) < 0 || argint(2, &whence) < 0)
-        return -1;
+        return -EINVAL;
 
     struct Proc *p = myproc();
     if (fd < 0 || fd >= NOFILE || p->ofile[fd] == 0)
-        return -1;
+        return -EBADF;
 
     return FileTable::lseek(p->ofile[fd], offset, whence);
 }
 
-static uint64 sys_shutdown()
+static uint64 sys_reboot()
 {
     SBI::sbi_shutdown();
-    while (1)
-        ;
     return 0;
 }
 
@@ -612,98 +602,95 @@ void syscall()
 {
     Proc *p = myproc();
     int num = p->tf->a7;
-    uint64 ret = static_cast<uint64>(-1);
-
-    /* Just For Debug */
-    // Drivers::uart_puts("Syscall: ");
-    // Drivers::print_hex(num);
-    // Drivers::uart_puts("\n");
+    uint64 ret = static_cast<uint64>(-ENOSYS);
 
     switch (num)
     {
-    case SYS_open:
-        ret = sys_open();
+    case SYS_mknodat:
+        ret = sys_mknodat();
         break;
-    case SYS_close:
-        ret = sys_close();
+    case SYS_mkdirat:
+        ret = sys_mkdirat();
         break;
-    case SYS_write:
-        ret = sys_write();
+    case SYS_unlinkat:
+        ret = sys_unlinkat();
         break;
-    case SYS_read:
-        ret = sys_read();
-        break;
-    case SYS_putc:
-        ret = sys_putc();
-        break;
-    case SYS_fork:
-        ret = sys_fork();
-        break;
-    case SYS_exec:
-        ret = sys_exec();
-        if (ret != static_cast<uint64>(-1))
-            return;
-        break;
-    case SYS_exit:
-        ret = sys_exit();
-        break;
-    case SYS_wait:
-        ret = sys_wait();
-        break;
-    case SYS_getpid:
-        ret = sys_getpid();
-        break;
-    case SYS_sbrk:
-        ret = sys_sbrk();
-        break;
-    case SYS_disk_test:
-        ret = sys_disk_test();
-        break;
-    case SYS_lseek:
-        ret = sys_lseek();
-        break;
-    case SYS_dup:
-        ret = sys_dup();
-        break;
-    case SYS_fstat:
-        ret = sys_fstat();
+    case SYS_linkat:
+        ret = sys_linkat();
         break;
     case SYS_chdir:
         ret = sys_chdir();
         break;
-    case SYS_mkdir:
-        ret = sys_mkdir();
+    case SYS_openat:
+        ret = sys_openat();
         break;
-    case SYS_mknod:
-        ret = sys_mknod();
+    case SYS_dup:
+        ret = sys_dup();
         break;
-    case SYS_pipe:
-        ret = sys_pipe();
+    case SYS_close:
+        ret = sys_close();
         break;
-    case SYS_unlink:
-        ret = sys_unlink();
+    case SYS_pipe2:
+        ret = sys_pipe2();
         break;
-    case SYS_link:
-        Drivers::uart_puts("Unimplemented syscall\n");
-        ret = sys_link();
+    case SYS_lseek:
+        ret = sys_lseek();
         break;
-    case SYS_uptime:
-        ret = sys_uptime();
+    case SYS_read:
+        ret = sys_read();
         break;
-    case SYS_sleep:
-        ret = sys_sleep();
+    case SYS_write:
+        ret = sys_write();
+        break;
+    case SYS_fstat:
+        ret = sys_fstat();
+        break;
+    case SYS_exit:
+        ret = sys_exit();
+        break;
+    case SYS_exit_group:
+        ret = sys_exit();
         break;
     case SYS_kill:
         ret = sys_kill();
         break;
-    case SYS_shutdown:
-        ret = sys_shutdown();
+    case SYS_getpid:
+        ret = sys_getpid();
         break;
+    case SYS_brk:
+        ret = sys_brk();
+        break;
+    case SYS_clone:
+        ret = sys_clone();
+        break;
+    case SYS_execve:
+        ret = sys_execve();
+        if (ret == 0)
+            return;
+        break;
+    case SYS_wait4:
+        ret = sys_wait4();
+        break;
+
+    // Custom / Debug
+    case SYS_reboot:
+        ret = sys_reboot();
+        break;
+    case SYS_putc:
+        ret = sys_putc();
+        break;
+    case SYS_disk_test:
+        ret = sys_disk_test();
+        break;
+    case SYS_nanosleep:
+        ret = sys_sleep();
+        break;
+
     default:
         Drivers::uart_puts("Unknown Syscall ID: ");
         Drivers::print_hex(num);
         Drivers::uart_puts("\n");
-        ret = static_cast<uint64>(-1);
+        ret = -ENOSYS;
         break;
     }
 

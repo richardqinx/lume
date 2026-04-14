@@ -368,8 +368,8 @@ int main()
     static char buf[100];
 
 
-    printf(ANSI_GREEN"\n[Lume Shell] Welcome! \n"ANSI_RESET);
-    printf(ANSI_YELLOW "[Lume Shell] Start your journey of exploration!"ANSI_RESET);
+    printf(ANSI_GREEN "\n[Lume Shell] Welcome! \n" ANSI_RESET);
+    printf(ANSI_YELLOW "[Lume Shell] Start your journey of exploration!" ANSI_RESET);
     printf("\n");
 
     while (getcmd(buf, sizeof(buf)) >= 0)
@@ -400,7 +400,7 @@ int main()
         }
         if (strcmp(buf, "shutdown") == 0 || strcmp(buf, "poweroff") == 0)
         {
-            printf(ANSI_BLUE"System shutting down..."ANSI_RESET);
+            printf(ANSI_BLUE "System shutting down..." ANSI_RESET);
             printf("\n");
             shutdown();
 

@@ -6,12 +6,16 @@
 #include "kernel/riscv.h"
 #include "kernel/pmm.h"
 #include "kernel/mm.h"
+#include "kernel/fdt.h"
 // #include "kernel/spinlock.h"
 #include "drivers/uart.h"
 #include "lib/string.h"
 
 extern "C" char kernel_end[];
 extern uint64 g_dtb_addr;
+
+// Default memory size 128MB, will be overwritten by FDT
+uint64 g_phys_size = 128 * 1024 * 1024;
 
 namespace PMM
 {
@@ -74,12 +78,20 @@ namespace PMM
 
     void init()
     {
+        // Use FDT memory size if available
+        if (g_devices.mem_size > 0)
+        {
+            g_phys_size = g_devices.mem_size;
+        }
+
         pmm_lock.init("pmm");
 
         uint64 kern_end_pa = PGROUNDUP((uint64)kernel_end);
         total_pages = (PHYSTOP - KERNBASE) / PGSIZE;
 
-        Drivers::uart_puts(ANSI_GREEN "[PMM] Total RAM size: 128MB\n" ANSI_RESET);
+        Drivers::uart_puts(ANSI_GREEN "[PMM] Total RAM size: ");
+        Drivers::uart_put_int(g_phys_size / (1024 * 1024));
+        Drivers::uart_puts(" MB\n" ANSI_RESET);
         // Place the mem_map array
         // mem_map is located immediately after kernel_end
         mem_map = (struct Page*)kern_end_pa;

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2026 Richard QIn
+ * Copyright (C) 2026 Richard Qin
  */
 
 #pragma once
 #include "common/types.h"
 #include "drivers/uart_color.h"
+#include "kernel/fdt.h"
 
-#define UART0 0x10000000L
+// UART register offsets (NS16550A)
 #define RHR 0 // Receive Holding Register (read mode)
 #define THR 0 // Transmit Holding Register (write mode)
 #define IER 1 // Interrupt Enable Register
@@ -20,6 +21,9 @@
 #define LSR_TX_IDLE 0x20  // THR can accept another character to send
 
 #define UART_RX_BUF_SIZE 128
+
+// UART base address from FDT (use inline function to avoid macro issues)
+static inline uint64 uart_base() { return g_devices.uart.base_addr; }
 
 namespace Drivers
 {

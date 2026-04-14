@@ -1,7 +1,22 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 Richard Qin
 
-TOOLCHAIN_PREFIX := riscv64-linux-gnu-
+# Try to find a suitable RISC-V toolchain prefix
+ifndef TOOLCHAIN_PREFIX
+    TOOLCHAIN_PREFIX := $(shell \
+        if command -v riscv64-linux-gnu-gcc >/dev/null 2>&1; then \
+            echo riscv64-linux-gnu-; \
+        elif command -v riscv64-unknown-gnu-gcc >/dev/null 2>&1; then \
+            echo riscv64-unknown-gnu-; \
+        elif command -v riscv64-unknown-linux-gnu-gcc >/dev/null 2>&1; then \
+            echo riscv64-unknown-linux-gnu-; \
+        elif command -v riscv64-unknown-elf-gcc >/dev/null 2>&1; then \
+            echo riscv64-unknown-elf-; \
+        else \
+            echo riscv64-linux-gnu-; \
+        fi)
+endif
+
 CC      := $(TOOLCHAIN_PREFIX)gcc
 CXX     := $(TOOLCHAIN_PREFIX)g++
 LD      := $(TOOLCHAIN_PREFIX)ld
@@ -22,7 +37,8 @@ ULIB_OBJS := $(BUILD_DIR)/user/entry.o \
              $(BUILD_DIR)/ulib/stdlib.o \
              $(BUILD_DIR)/ulib/string.o \
              $(BUILD_DIR)/ulib/cxx.o \
-             $(BUILD_DIR)/ulib/iostream.o
+             $(BUILD_DIR)/ulib/iostream.o \
+			 $(BUILD_DIR)/ulib/syscalls.o
 
 INITCODE_BIN := $(BUILD_DIR)/user/initcode
 

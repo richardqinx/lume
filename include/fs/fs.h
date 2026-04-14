@@ -99,4 +99,7 @@ namespace VFS
     Inode *namei(const char *path);
     // Find the parent directory inode of the path, and copy the last part of the path (the file name) into the name buffer
     Inode *nameiparent(const char *path, char *name);
+    // Register a file system
+    void register_fs(FileSystem *fs);
+
 } // namespace VFS

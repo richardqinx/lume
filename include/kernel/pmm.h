@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (C) 2026 Richard QIn
+ * Copyright (C) 2026 Richard Qin
  */
 
 #pragma once
 #include "common/types.h"
 #include "kernel/spinlock.h"
+#include "kernel/fdt.h" // For g_devices
 
 // Physical Memory Layout Definition
 #define KERNBASE 0x80000000
-// Set the memory size to 128MB
-#define PHYSIZE (128 * 1024 * 1024)
+
+// Dynamic memory size from FDT
+// Default to 128MB if FDT not present/parsed
+extern uint64 g_phys_size;
+
+#define PHYSIZE (g_phys_size)
 #define PHYSTOP (KERNBASE + PHYSIZE)
 
 // Buddy System Max Order

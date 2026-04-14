@@ -3,6 +3,7 @@
  * Copyright (C) 2026 Richard QIn
  */
 #include "drivers/virtio.h"
+#include "kernel/fdt.h"
 #include "kernel/riscv.h"
 #include "kernel/pmm.h"
 #include "kernel/spinlock.h"
@@ -67,11 +68,14 @@ namespace VirtIO
     {
         disk.lock.init("virtio_disk");
 
-        // 1. Probing for VirtIO-MMIO device
+        // 1. Probe VirtIO devices discovered by FDT
         bool found = false;
-        // Probe common VirtIO addresses in QEMU virt machine
-        for (uint64 addr = 0x10001000; addr < 0x10009000; addr += 0x1000)
+        for (int i = 0; i < g_devices.virtio_count; i++)
         {
+            uint64 addr = g_devices.virtio[i].base_addr;
+            if (addr == 0)
+                continue;
+
             volatile uint32 *magic = (volatile uint32 *)(addr + VIRTIO_MMIO_MAGIC_VALUE);
             volatile uint32 *dev_id = (volatile uint32 *)(addr + VIRTIO_MMIO_DEVICE_ID);
 

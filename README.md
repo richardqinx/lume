@@ -4,6 +4,17 @@
 
 Lume OS is a 64-bit monolithic operating system kernel written in C++ for the RISC-V architecture. Currently designed for educational purposes and kernel hacking, the project is now evolving towards a Tiny Linux-Compatible Kernel capable of running standard Linux userspace binaries (musl libc, BusyBox, etc.) by implementing the Linux Syscall ABI.
 
+## Note
+After studying for a period of time, I have roughly understood the design of some modern operating systems such as Windows, Linux, and BSD. I decided to refactor this operating system to make its architecture clear, scalable, and portable. My goal is to make this system compatible with the Linux ABI, so that musl libc and busybox can be easily ported, thereby introducing the ability to depend on more Linux software. Although this goal is very distant, I still decided to try. I have chosen to use C++ as the development language, even though many people think C++ is not a language for developing kernels, I believe that the object-oriented features of C++ can make system code easier to read and understand. Compared to reading various complex macros, reading some object-oriented code might be easier for people unfamiliar with the kernel. Therefore, I decided to sacrifice some performance along with extra handling for the C++ runtime in order to achieve this; after all, you have to give up something to gain something. 
+
+The source code of the new system is placed in the `na` (New Architecture) directory, welcome to read it. After learning about the development history of Windows NT, I realized the importance of documentation. The NT team spent a lot of time writing documentation before writing the first line of code, and by the time they wrote code, the system was basically finalized. As a student who is not particularly outstanding, I cannot complete the design of the system before starting to write code, but I can decide on its design before starting each part, and then adjust it according to reality. The documents are in `docs/specs/` directory.
+
+It can basically be concluded that writing an operating system in this era is a thankless task. A personally implemented operating system may never run on machines beyond my own tests, so what is the point of doing this? Perhaps it is just to add color to a monotonous life. However, if you really have ideas, you are welcome to contact me.
+
+The project still uses the GPL v2 License. Since I plan to use GPL v2-only software such as busybox, I cannot make the entire project GPL v3, but for the parts of the source code that I independently complete, you can use GPL v2 or later versions. We must insist on free software; please support the free software movement. This is not about price, it is about freedom.
+
+The following content and the original source code are all deprecated, and it is not recommended that you spend time reading that bad stuff. Your time is valuable and should be spent on more meaningful things.
+
 ## 🛠 Build & Run
 
 ### Prerequisites
@@ -75,52 +86,6 @@ Based on the current source tree, Lume OS implements the following core subsyste
 * Shell: A functional shell (`sh`) supporting pipes (`|`), redirection (`<`, `>`), and background execution (`&`).
 
 * Utils: Standard Unix-like tools: `ls`, `cat`, `echo`, `mkdir`, `rm`, `touch`, `cp`, `mv`.
-
-## 📉 Gap Analysis: Lume OS vs. Linux
-To achieve the goal of binary compatibility with the Linux ecosystem, Lume OS is currently undergoing a major refactoring. The following table highlights the critical differences:
-
-|Subsystem|Lume OS (Current)|Linux / Modern Goal|Gap & Impact|
-|:------:|:---------:|:--------:|:---------:|
-|Syscall ABI|Custom IDs & `-1` return codes|Standard RISC-V headers & `-errno`|Binaries compiled for Linux cannot run on Lume.|
-|Memory Model|Linear `p->sz` (Heap only)|VMA (Virtual Memory Areas)|Cannot support `mmap`, memory gaps, or dynamic libraries (`.so`).|
-|Binary Format|Static ELF only|Dynamic ELF (`PT_INTERP`)|Cannot run `ld.so` or shared libraries; high memory waste.|
-|Threading|Single-threaded Processes|1:1 Threads (`clone` + NPTL)|Cannot support `pthreads` or modern concurrent apps.|
-|Filesystem|Tightly coupled FAT32|VFS + Mount Points + Pseudo FS|Missing `/dev`, `/proc`, `/sys`; standard tools (`top`, `ps`) fail.|
-|Signals|Basic `kill` flag|Full Signal Handling|No `Ctrl-C` handling, `SIGSEGV` recovery, or async notifications.|
-|I/O Model|Synchronous/Blocking|Async/Non-blocking (`poll`/`epoll`)|Cannot support high-performance servers (e.g., Nginx).|
-
-## 🗺️ Roadmap to Linux Compatibility
-We are executing a 4-phase plan to transform Lume OS into a Tiny Linux Clone.
-
-### Phase 1: Core Architecture Refactoring (The Foundation)
-* [ ] VMA Implementation: Replace `sz` with `vm_area_struct` (RB-Tree/List) to support mmap and demand paging.
-
-* [ ] VFS 2.0: Decouple FAT32. Implement `struct mount`, `dentry` cache, and `RamFS`.
-
-* [ ] DevFS & ProcFS: Implement `/dev` and `/proc` mounting support.
-
-* [ ] Syscall Alignment: Renumber syscalls to match Linux RISC-V 64 ABI and standardize errno.
-
-### Phase 2: Runtime Environment
-* [ ] ELF Interpreter: Support `PT_INTERP` to load dynamic linkers (`ld-musl-riscv64.so.1`).
-
-* [ ] Auxiliary Vector: Construct `AT_RANDOM`, `AT_PHDR`, etc., on the user stack.
-
-* [ ] New Syscalls: `brk`, `writev`, `readv`, `ioctl` (TTY), `getdents64`.
-
-### Phase 3: Advanced Process Features
-* [ ] Threading: Implement `sys_clone` with `CLONE_VM` / `CLONE_THREAD`.
-
-* [ ] Synchronization: Implement `sys_futex` for userspace locking.
-
-* [ ] Signals: Implement `sigaction`, signal frame construction, and `sigreturn` trampoline.
-
-### Phase 4: Ecosystem & Networking
-* [ ] Network Stack: Port lwIP and implement `virtio-net` driver.
-
-* [ ] Socket API: Implement `socket`, `bind`, `connect`, `poll`.
-
-* [ ] Userland: Port Musl Libc and BusyBox.
 
 ## 📄 License
 

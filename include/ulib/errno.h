@@ -1,11 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
- * Copyright (C) 2026 Richard Qin
  * Lume OS - Linux Compatibility Layer
  *
  * This file aligns strictly with Linux RISC-V 64 ABI (asm-generic).
- * Reference: linux/include/uapi/asm-generic/errno-base.h
- * Reference: linux/include/uapi/asm-generic/errno.h
+ * The definitions are copied from the Linux kernel's UAPI headers
+ * (include/uapi/asm-generic/errno-base.h and include/uapi/asm-generic/errno.h)
+ * to ensure ABI compatibility. Original copyrights apply.
  */
 
 #ifndef _ERRNO_H

@@ -89,17 +89,26 @@ private:
 
 ### 4.1 中断压栈/出栈协议 (Internal API)
 
-必须在 `Spinlock::acquire()` 和 `release()` 内部隐式调用，严禁外部业务层手动调用。
+**这是 Spinlock 安全性的核心。** 必须在 `Spinlock::acquire()` 和 `release()` 内部隐式调用，严禁外部业务层手动调用。它实现了 `_irqsave` / `_irqrestore` 的语义。
 
 ```cpp
 namespace sync {
-    // 关闭中断，并增加当前 CPU 的 lock_depth。
-    // 如果是第一把锁 (depth 从 0 变 1)，记录当前 sstatus.SIE 状态到 intr_was_on。
-    void push_intr();
+    /**
+     * @brief 保存当前中断状态、关闭中断，并增加锁嵌套深度。
+     *
+     * 如果是获取第一把锁 (lock_depth 从 0 变 1)，则将当前的中断使能状态
+     * (sstatus.SIE) 保存到 per-cpu 的 intr_was_on 字段中。
+     * 随后，无论何种情况，都关闭中断。
+     */
+    void push_intr_save();
 
-    // 减少当前 CPU 的 lock_depth。
-    // 如果 depth 降为 0 且入栈前中断是开启的 (intr_was_on == true)，则恢复中断。
-    void pop_intr();
+    /**
+     * @brief 减少锁嵌套深度，并在释放最后一层锁时恢复之前的中断状态。
+     *
+     * 如果锁嵌套深度降为 0，则检查 intr_was_on 字段。只有当获取第一把锁
+     * 之前中断是开启的时候，才重新开启中断。
+     */
+    void pop_intr_restore();
 }
 ```
 

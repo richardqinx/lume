@@ -14,6 +14,7 @@
  */
 
 #include <lume/types.h>
+#include <lume/config.h>
 
 namespace sync {
 
@@ -25,7 +26,7 @@ struct CpuSyncState {
 inline constexpr uint64 kInvalidCpuId = ~0ULL;
 
 // BSS-segment global array, zero-initialized by entry.S
-extern CpuSyncState g_cpu_sync_states[kMaxCPUs];
+extern CpuSyncState g_cpu_sync_states[kMaxCpus];
 
 // Internal API — called only by Spinlock::acquire/release
 void push_intr();

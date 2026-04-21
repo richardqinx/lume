@@ -23,7 +23,7 @@
 // ============================================================
 namespace sync {
 
-CpuSyncState g_cpu_sync_states[kMaxCPUs];
+CpuSyncState g_cpu_sync_states[kMaxCpus];
 
 void push_intr() {
     bool was_on = arch::cpu::intr_enabled();
@@ -53,7 +53,7 @@ void pop_intr() {
 
 void Spinlock::init(const char* name) {
     name_ = name;
-    locked_ = 0;
+    locked_.store(0, __ATOMIC_RELAXED);
     cpu_id_ = sync::kInvalidCpuId;
 }
 
@@ -79,10 +79,10 @@ void Spinlock::acquire() {
     // Step 3: TTAS spin loop
     while (true) {
         // Outer: spin on local cache copy (no bus traffic)
-        while (__atomic_load_n(&locked_, __ATOMIC_RELAXED))
+        while (locked_.load(__ATOMIC_RELAXED))
             ;
         // Inner: attempt atomic exchange with acquire semantics
-        if (__atomic_exchange_n(&locked_, 1, __ATOMIC_ACQUIRE) == 0)
+        if (locked_.exchange(1, __ATOMIC_ACQUIRE) == 0)
             break;
     }
 
@@ -100,7 +100,7 @@ void Spinlock::release() {
     cpu_id_ = sync::kInvalidCpuId;
 
     // Step 3: release the lock with release semantics
-    __atomic_store_n(&locked_, 0, __ATOMIC_RELEASE);
+    locked_.store(0, __ATOMIC_RELEASE);
 
     // Step 4: restore interrupt state if this was the last lock
     sync::pop_intr();

@@ -14,6 +14,7 @@
  */
 
 #include <lume/types.h>
+#include <lume/atomic.h>
 #include "cpu_state.h"
 
 class Spinlock {
@@ -35,7 +36,7 @@ public:
     bool is_held_by_current_cpu() const;
 
 private:
-    uint32 locked_ = 0;                    // 0 = free, 1 = held
+    lume::atomic<uint32> locked_;             // 0 = free, 1 = held
     const char* name_ = "uninit";          // Lock name (for panic messages)
     uint64 cpu_id_ = sync::kInvalidCpuId;  // Holder CPU ID
 };

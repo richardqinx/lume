@@ -230,8 +230,10 @@ Phase 2 全部完成后，从各 spec 中提取汇总为 `docs/specs/lock_orderi
 ### 5.3 原子操作
 
 - 引用计数（`refcount`）使用 `__atomic_fetch_sub` / `__atomic_fetch_add` + `__ATOMIC_ACQ_REL`
+- **[强制]** 所有在多核间无锁共享的数据，必须使用 `lume::atomic<T>` 类型封装，并显式指定内存序。
 - Spinlock 的 acquire/release 内含隐式 fence，临界区内无需额外屏障
 - **禁止** 用裸 `volatile` 替代原子操作
+- **禁止** 在代码中直接使用 `__atomic_*` 内建函数，必须通过 `lume::atomic<T>` 包装器。
 
 ---
 
@@ -364,4 +366,3 @@ $(BUILD)/%.o: %.S
 | `make fmt` | `clang-format -i` 格式化所有源文件 |
 | `make lint` | `clang-tidy` 静态分析 |
 | `make test` | QEMU 无头冒烟测试 (Phase 4) |
-

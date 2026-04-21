@@ -11,21 +11,9 @@
  */
 
 #include <lume/types.h>
+#include <lume/addr.h>
 #include <arch/cpu.h>
-
-// Minimal direct UART output (same as main.cc early boot)
-// This can be used by other early-boot code before console_init()
-
-constexpr uint64 kUart0VA = 0x10000000UL + 0xFFFFFFC000000000ULL;
-
-extern "C" void early_putc(char c) {
-    volatile auto* uart = reinterpret_cast<volatile uint8*>(kUart0VA);
-    *uart = static_cast<uint8>(c);
-}
-
-extern "C" void early_puts(const char* s) {
-    while (*s) early_putc(*s++);
-}
+#include <lume/console.h>
 
 extern "C" [[noreturn]] void kernel_panic(const char* msg, const char* detail) {
     arch::cpu::intr_off();

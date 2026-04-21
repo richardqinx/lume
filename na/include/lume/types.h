@@ -8,6 +8,8 @@
  *
  * All kernel code should use these types instead of
  * stdint.h (which may not exist in freestanding mode).
+ *
+ * Kernel-wide configuration constants are in <lume/config.h>.
  */
 
 using uint8  = unsigned char;
@@ -28,12 +30,3 @@ using uintptr = uint64;
 #ifndef nullptr
 /* C++11 and later have nullptr built-in */
 #endif
-
-/* Max CPUs supported */
-inline constexpr int kMaxCPUs = 8;
-
-/* Page size */
-inline constexpr uint64 kPageSize = 4096;
-
-/* Kernel virtual address offset */
-inline constexpr uint64 kPageOffset = 0xFFFFFFC000000000ULL;

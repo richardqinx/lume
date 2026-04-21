@@ -1,9 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright (C) 2026 Richard Qin */
-/* from linux kernel linux/include/uapi/asm-generic/errno-base.h*/
+/* from linux kernel linux/include/uapi/asm-generic/errno-base.h */
 
-#ifndef _ASM_GENERIC_ERRNO_BASE_H
-#define _ASM_GENERIC_ERRNO_BASE_H
+#pragma once
 
 #define	EPERM		 1	/* Operation not permitted */
 #define	ENOENT		 2	/* No such file or directory */
@@ -39,5 +38,3 @@
 #define	EPIPE		32	/* Broken pipe */
 #define	EDOM		33	/* Math argument out of domain of func */
 #define	ERANGE		34	/* Math result not representable */
-
-#endif

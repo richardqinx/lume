@@ -1,3 +1,27 @@
-tree.txt
 build/
-fs.img
+na/build/
+*.o
+*.d
+*.elf
+*.bin
+*.asm
+*.img
+tree.txt
+compile_commands.json
+.clangd/
+.cache/
+.vscode/
+# !.vscode/extensions.json
+# !.vscode/launch.json
+# !.vscode/settings.json
+*~
+*.swp
+*.swo
+.idea/
+cmake-build-*/
+gdb.txt
+.gdb_history
+vgcore.*
+core
+.DS_Store
+Thumbs.db

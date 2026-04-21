@@ -20,9 +20,10 @@
  * Reference: docs/specs/linker_and_entry.md
  */
 
+#include <lume/config.h>
+
 #define PAGE_OFFSET     0xFFFFFFC000000000
 #define BOOT_STACK_SIZE 8192
-#define NCPU_MAX        8
 
 /* SV39 PTE flags */
 #define PTE_V   (1 << 0)    /* Valid */
@@ -192,18 +193,24 @@ real_start:
 
     /* ---- 6.3: Jump to higher-half virtual address ---- */
     /* Now we are executing via the identity map (PA == VA for 0x8...).
-     * Load the VA of the next instruction and jump there,
-     * so PC switches from physical to virtual address space. */
+     * `la` is PC-relative (medany), so it yields a PHYSICAL address.
+     * We must add PAGE_OFFSET to convert to the higher-half VA. */
     la      t0, .Lhigher_half
+    li      t1, PAGE_OFFSET
+    add     t0, t0, t1
     jr      t0
 
 .Lhigher_half:
     /* We are now running at virtual addresses (0xFFFFFFC0...) !
      * The identity map is still active but will be removed by vmm_init(). */
 
-    /* ---- 6.4: Reload sp with virtual address ---- */
-    /* Boot stack was set up using physical-linked VA already (linker placed
-     * boot_stack in higher-half), so sp is valid. Reload gp just in case. */
+    /* ---- 6.4: Fix sp and gp to virtual addresses ---- */
+    /* sp was set up before MMU using PC-relative `la`, so it holds a
+     * physical address. Add PAGE_OFFSET to convert to higher-half VA.
+     * gp is similarly reloaded — now that PC is at VA, `la` resolves
+     * correctly via PC-relative addressing. */
+    li      t0, PAGE_OFFSET
+    add     sp, sp, t0
     .option push
     .option norelax
     la      gp, __global_pointer$

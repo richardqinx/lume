@@ -46,28 +46,36 @@ LINKER_SCRIPT := linker.ld
 
 # Common flags (base, before module includes)
 WARNINGS := -Wall -Wextra -Wno-unused-parameter
-INCLUDES := -Iinclude
+INCLUDES := -Iinclude -I.
 
 # ============================================================
 # Source Collection (Non-Recursive Module Fragments)
 # Module .mk files may append to SRCS_CC, SRCS_S, INCLUDES
 # ============================================================
 SRCS_CC :=
+SRCS_C  :=
 SRCS_S  :=
+SRCS_s  :=
 
 include arch/$(ARCH)/module.mk
 include kernel/module.mk
-# include mm/module.mk          # Phase 1
+include mm/module.mk
 # include fs/module.mk          # Phase 3
-# include drivers/module.mk     # As needed
+include drivers/module.mk
+include fdt/module.mk
 include lib/module.mk
+include test/module.mk
 
 # Compiler flags (defined AFTER includes so INCLUDES is complete)
-CFLAGS   := $(WARNINGS) -O2 -g \
+CFLAGS   := $(WARNINGS) -O2 -g -DDEBUG \
             -ffreestanding -nostdlib \
             -mcmodel=medany \
             -MMD -MP \
             $(INCLUDES)
+
+# C flags for musl libc sources: add libc-shim headers first
+CFLAGS_LIBC := $(CFLAGS) -Iinclude/libc-shim \
+               -Wno-parentheses -Wno-sign-compare
 
 CXXFLAGS := $(CFLAGS) \
             -std=c++17 \
@@ -82,7 +90,9 @@ LDFLAGS  := -nostdlib -static
 # Object File Computation
 # ============================================================
 OBJS := $(patsubst %.cc,$(BUILD)/%.o,$(SRCS_CC)) \
-        $(patsubst %.S,$(BUILD)/%.o,$(SRCS_S))
+        $(patsubst %.c,$(BUILD)/%.o,$(SRCS_C)) \
+        $(patsubst %.S,$(BUILD)/%.o,$(SRCS_S)) \
+        $(patsubst %.s,$(BUILD)/%.o,$(SRCS_s))
 
 DEPS := $(OBJS:.o=.d)
 
@@ -111,8 +121,20 @@ $(BUILD)/%.o: %.cc
 	@mkdir -p $(dir $@)
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Assemble RISC-V assembly
+# Compile C sources (musl libc)
+$(BUILD)/%.o: %.c
+	@echo "  CC      $<"
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS_LIBC) -c $< -o $@
+
+# Assemble (preprocessed .S)
 $(BUILD)/%.o: %.S
+	@echo "  AS      $<"
+	@mkdir -p $(dir $@)
+	@$(CC) $(ASFLAGS) -c $< -o $@
+
+# Assemble (raw .s, no preprocessing)
+$(BUILD)/%.o: %.s
 	@echo "  AS      $<"
 	@mkdir -p $(dir $@)
 	@$(CC) $(ASFLAGS) -c $< -o $@
@@ -149,6 +171,12 @@ disasm: $(TARGET)
 fmt:
 	@echo "  FMT     Formatting source files..."
 	@find . -name '*.cc' -o -name '*.h' | xargs clang-format -i 2>/dev/null || true
+
+lint:
+	@echo "  LINT    Generating compile_commands.json via bear..."
+	@bear -- $(MAKE) all
+	@echo "  LINT    Running clang-tidy on C++ sources..."
+	@clang-tidy -p . $(SRCS_CC) || true
 
 # Print build info (for debugging Makefile issues)
 info:

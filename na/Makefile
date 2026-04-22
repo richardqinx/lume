@@ -42,7 +42,8 @@ ARCH    := riscv
 BUILD   := build
 TARGET  := $(BUILD)/kernel.elf
 IMAGE   := $(BUILD)/kernel.bin
-LINKER_SCRIPT := linker.ld
+LDS_SRC := arch/$(ARCH)/kernel/lumeos.lds.S
+LINKER_SCRIPT := $(BUILD)/lumeos.lds
 
 # Common flags (base, before module includes)
 WARNINGS := -Wall -Wextra -Wno-unused-parameter
@@ -102,6 +103,12 @@ DEPS := $(OBJS:.o=.d)
 .PHONY: all clean run debug fmt disasm
 
 all: $(IMAGE)
+
+# Preprocess linker script template (.lds.S → .lds)
+$(LINKER_SCRIPT): $(LDS_SRC) include/lume/lumeos.lds.h
+	@echo "  LDS     $@"
+	@mkdir -p $(dir $@)
+	@$(CC) -E -P -x c $(INCLUDES) $< -o $@
 
 # Link kernel ELF
 $(TARGET): $(OBJS) $(LINKER_SCRIPT)

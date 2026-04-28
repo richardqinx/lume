@@ -29,6 +29,7 @@
         _srodata = .;                               \
         *(.rodata .rodata.*)                        \
         INIT_ARRAY                                  \
+        DRIVER_ARRAY                                \
         _erodata = .;                               \
     }
 
@@ -38,6 +39,13 @@
     __init_array_start = .; \
     KEEP(*(.init_array .init_array.*)) \
     __init_array_end = .;
+
+/* ===== Driver Registration Table ===== */
+#define DRIVER_ARRAY                \
+    . = ALIGN(8);                   \
+    PROVIDE(__drivers_start = .);   \
+    KEEP(*(.drivers))               \
+    PROVIDE(__drivers_end = .);
 
 /* ===== Initialized Read-Write Data ===== */
 #define DATA_SECTION                            \

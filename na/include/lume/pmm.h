@@ -24,8 +24,10 @@
 
 /* Buddy system constants */
 inline constexpr int kMaxOrder = 11;           // Orders 0..10 → 4KB..4MB
-inline constexpr int kPcpHighWatermark = 64;   // Max frames cached per CPU
-inline constexpr int kPcpBatchSize = 32;       // Frames moved per refill/drain
+
+/* Per-CPU cache dynamic parameters (calculated in pmm_init) */
+extern uint32 g_pcp_high_watermark;
+extern uint32 g_pcp_batch_size;
 
 /* ================================================================== */
 /*  Public free-function API                                          */

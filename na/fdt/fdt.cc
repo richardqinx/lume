@@ -19,7 +19,7 @@
 
 #include <lume/fdt.h>
 #include <lume/new.h>
-#include <lume/panic.h>
+#include <lume/klog.h>
 #include <lume/addr.h>
 
 /* ------------------------------------------------------------------ */
@@ -250,9 +250,9 @@ void FdtManager::early_scan_mem(uint64 fdt_paddr, uint64 *base, uint64 *size)
  * Unlike early_scan_mem, failure here is non-fatal: we fall back to
  * the platform's default UART address (0x10000000 for QEMU virt).
  */
-void FdtManager::early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr)
+void FdtManager::early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr, uint64 *uart_size)
 {
-    if (!uart_addr)
+    if (!uart_addr || !uart_size)
         return;
 
     const fdt_header *hdr = reinterpret_cast<const fdt_header *>(fdt_paddr);
@@ -269,6 +269,9 @@ void FdtManager::early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr)
     uint32 address_cells[16] = {2};
     uint32 size_cells[16]    = {1};
     bool in_uart_node = false;
+    bool has_current_node_reg = false;
+    uint64 current_node_reg = 0;
+    uint64 current_node_size = 0;
 
     while (true) {
         uint32 token = bswap32(
@@ -288,11 +291,13 @@ void FdtManager::early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr)
                 size_cells[depth]    = size_cells[depth - 1];
             }
             in_uart_node = false;
+            has_current_node_reg = false;
 
         } else if (token == FDT_END_NODE) {
             if (depth >= 0)
                 depth--;
             in_uart_node = false;
+            has_current_node_reg = false;
 
         } else if (token == FDT_PROP) {
             uint32 len = bswap32(
@@ -316,11 +321,24 @@ void FdtManager::early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr)
                             reinterpret_cast<const char *>(prop_val),
                             len, "ns16550a")) {
                         in_uart_node = true;
+                        if (has_current_node_reg) {
+                            *uart_addr = current_node_reg;
+                            *uart_size = current_node_size;
+                            return;
+                        }
                     }
-                } else if (in_uart_node && str_equals(prop_name, "reg")) {
+                } else if (str_equals(prop_name, "reg")) {
                     uint32 p_depth = (depth > 0) ? depth - 1 : 0;
-                    *uart_addr = read_cells(prop_val, address_cells[p_depth]);
-                    return; // Found it
+                    current_node_reg = read_cells(prop_val, address_cells[p_depth]);
+                    current_node_size = read_cells(
+                        prop_val + address_cells[p_depth] * 4,
+                        size_cells[p_depth]);
+                    has_current_node_reg = true;
+                    if (in_uart_node) {
+                        *uart_addr = current_node_reg;
+                        *uart_size = current_node_size;
+                        return; // Found it
+                    }
                 }
             }
 
@@ -336,6 +354,7 @@ void FdtManager::early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr)
     }
 
     *uart_addr = 0;
+    *uart_size = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -549,7 +568,7 @@ void fdt_early_get_mem_info(uint64 *base, uint64 *size)
     FdtManager::early_scan_mem(g_fdt->get_paddr(), base, size);
 }
 
-void fdt_early_get_uart_info(uint64 *uart_addr)
+void fdt_early_get_uart_info(uint64 *uart_addr, uint64 *uart_size)
 {
-    FdtManager::early_scan_uart(g_fdt->get_paddr(), uart_addr);
+    FdtManager::early_scan_uart(g_fdt->get_paddr(), uart_addr, uart_size);
 }

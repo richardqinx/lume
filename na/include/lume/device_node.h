@@ -10,7 +10,7 @@
  * Nodes form a parent-children hierarchy via intrusive linked lists.
  * After unflattening, the tree is globally read-only and requires no locks.
  *
- * Created during Phase 2 (fdt_unflatten) when Slab is available.
+ * Created when Slab is available.
  *
  * Reference: docs/specs/fdt.md §3.2
  */

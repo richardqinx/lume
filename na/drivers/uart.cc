@@ -13,7 +13,8 @@
 #include <lume/addr.h>
 #include <arch/config.h>
 
-static uint64 g_uart_pa = arch::kDefaultUartPA;
+static uint64 g_uart_pa = 0;
+static uint64 g_uart_size = 0;
 
 extern "C" void early_putc(char c) {
     if (!g_uart_pa) return;
@@ -27,9 +28,11 @@ extern "C" void early_puts(const char* s) {
 
 void console_early_init(uint64 fdt_paddr) {
     uint64 pa = 0;
-    FdtManager::early_scan_uart(fdt_paddr, &pa);
+    uint64 size = 0;
+    FdtManager::early_scan_uart(fdt_paddr, &pa, &size);
     if (pa != 0) {
         g_uart_pa = pa;
+        if (size != 0) g_uart_size = size;
     }
 }
 
@@ -38,7 +41,7 @@ void console_init() {
      * Once vmm_init() activates the new page table, the 1GB identity map is dropped.
      * The UART must be explicitly registered into the active page table.
      */
-    if (g_uart_pa != 0) {
-        vmm_map_kernel_mmio(g_uart_pa, 0x1000);
+    if (g_uart_pa != 0 && g_uart_size != 0) {
+        vmm_map_kernel_mmio(g_uart_pa, g_uart_size);
     }
 }

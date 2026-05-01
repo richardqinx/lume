@@ -24,7 +24,7 @@
 #include <lume/config.h>
 #include <lume/fdt.h>
 #include <lume/new.h>
-#include <lume/panic.h>
+#include <lume/klog.h>
 #include <lume/types.h>
 #include <arch/cpu.h>
 #include <kernel/sync/spinlock.h>
@@ -56,6 +56,9 @@ static Frame*          g_frame_map = nullptr;      // Flat array of Frame descri
 static uint64          g_mem_base  = 0;            // Physical memory base (from FDT)
 static uint64          g_mem_size  = 0;            // Total physical memory size
 static uint64          g_num_frames = 0;           // Total managed frames
+
+uint32 g_pcp_high_watermark = 0;
+uint32 g_pcp_batch_size = 0;
 
 /* ------------------------------------------------------------------ */
 /*  Address conversion helpers                                        */
@@ -216,7 +219,7 @@ static void buddy_free(Frame* frame, uint8 order)
 static void refill_pcp(PerCpuCache* pcp)
 {
     LockGuard guard(g_pmm_lock);
-    for (int i = 0; i < kPcpBatchSize; i++) {
+    for (uint32 i = 0; i < g_pcp_batch_size; i++) {
         Frame* f = buddy_alloc(0);
         if (!f)
             break;
@@ -325,7 +328,7 @@ void pmm_free_frame(Frame* frame)
     pcp->count++;
 
     // Drain if over high watermark
-    if (pcp->count >= kPcpHighWatermark)
+    if (pcp->count >= g_pcp_high_watermark)
         drain_pcp(pcp);
 
     if (was_on)
@@ -404,6 +407,15 @@ void pmm_init()
 
     uint64 mem_end = mem_base + mem_size;
     g_num_frames = mem_size / kPageSize;
+
+    /*
+     * Dynamically calculate PCP parameters based on memory size.
+     * Rule of thumb: batch_size = max(16, total_pages / (cpu_count * 1024))
+     * This avoids depleting global memory on small RAM systems.
+     */
+    uint32 calc_batch = static_cast<uint32>(g_num_frames / (kMaxCpus * 1024));
+    g_pcp_batch_size = (calc_batch > 16) ? calc_batch : 16;
+    g_pcp_high_watermark = g_pcp_batch_size * 2;
 
     /*
      * 2. Place the frame_map array.

@@ -33,9 +33,9 @@ public:
     // Panics if the FDT is invalid or /memory is missing.
     static void early_scan_mem(uint64 fdt_paddr, uint64 *base, uint64 *size);
 
-    // Extract the UART base address by matching compatible = "ns16550a".
-    // Falls back to platform default (0x10000000) on failure.
-    static void early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr);
+    // Extract the UART base address and size by matching compatible = "ns16550a".
+    // Falls back to platform default on failure.
+    static void early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr, uint64 *uart_size);
 
     // --- Phase 2: Object tree construction (requires Slab) ---
 
@@ -78,4 +78,4 @@ DeviceNode *fdt_get_node_by_path(const char *path);
 
 // Early scan wrappers (delegate to FdtManager static methods).
 void fdt_early_get_mem_info(uint64 *base, uint64 *size);
-void fdt_early_get_uart_info(uint64 *uart_addr);
+void fdt_early_get_uart_info(uint64 *uart_addr, uint64 *uart_size);

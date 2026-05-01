@@ -21,8 +21,4 @@ inline constexpr uint64 kVAOffset = 0xFFFFFFC000000000ULL;
 /* Physical memory base (where RAM starts on RISC-V virt platform) */
 inline constexpr uint64 kPhysBase = 0x80000000ULL;
 
-/* Platform default MMIO base addresses (QEMU virt) */
-inline constexpr uint64 kDefaultUartPA = 0x10000000ULL;
-inline constexpr uint64 kDefaultPlicPA = 0x0C000000ULL;
-
 }  // namespace arch

@@ -14,9 +14,20 @@
 # Reference: docs/specs/00_conventions.md §7
 
 # ============================================================
+# Build Configuration
+# ============================================================
+ARCH    ?= riscv
+BUILD   := build
+TARGET  := $(BUILD)/kernel.elf
+IMAGE   := $(BUILD)/kernel.bin
+LDS_SRC := arch/$(ARCH)/kernel/lumeos.lds.S
+LINKER_SCRIPT := $(BUILD)/lumeos.lds
+
+# ============================================================
 # Toolchain Detection
 # ============================================================
 ifndef TOOLCHAIN_PREFIX
+ifeq ($(ARCH),riscv)
     TOOLCHAIN_PREFIX := $(shell \
         if command -v riscv64-linux-gnu-gcc >/dev/null 2>&1; then \
             echo riscv64-linux-gnu-; \
@@ -27,6 +38,11 @@ ifndef TOOLCHAIN_PREFIX
         else \
             echo riscv64-linux-gnu-; \
         fi)
+else ifeq ($(ARCH),aarch64)
+    TOOLCHAIN_PREFIX := aarch64-linux-gnu-
+else ifeq ($(ARCH),x86_64)
+    TOOLCHAIN_PREFIX := x86_64-linux-gnu-
+endif
 endif
 
 CC      := $(TOOLCHAIN_PREFIX)gcc
@@ -34,16 +50,6 @@ CXX     := $(TOOLCHAIN_PREFIX)g++
 LD      := $(TOOLCHAIN_PREFIX)ld
 OBJCOPY := $(TOOLCHAIN_PREFIX)objcopy
 OBJDUMP := $(TOOLCHAIN_PREFIX)objdump
-
-# ============================================================
-# Build Configuration
-# ============================================================
-ARCH    := riscv
-BUILD   := build
-TARGET  := $(BUILD)/kernel.elf
-IMAGE   := $(BUILD)/kernel.bin
-LDS_SRC := arch/$(ARCH)/kernel/lumeos.lds.S
-LINKER_SCRIPT := $(BUILD)/lumeos.lds
 
 # Common flags (base, before module includes)
 WARNINGS := -Wall -Wextra -Wno-unused-parameter
@@ -58,7 +64,7 @@ SRCS_C  :=
 SRCS_S  :=
 SRCS_s  :=
 
-include arch/$(ARCH)/module.mk
+-include arch/$(ARCH)/module.mk
 include kernel/module.mk
 include mm/module.mk
 # include fs/module.mk          # Phase 3
@@ -152,9 +158,19 @@ $(BUILD)/%.o: %.s
 # ============================================================
 # Run & Debug
 # ============================================================
+ifeq ($(ARCH),riscv)
 QEMU := qemu-system-riscv64
 QEMU_MACHINE := -machine virt -m 128M -nographic
 QEMU_BIOS := -bios default
+else ifeq ($(ARCH),aarch64)
+QEMU := qemu-system-aarch64
+QEMU_MACHINE := -machine virt -cpu cortex-a53 -m 128M -nographic
+QEMU_BIOS := 
+else ifeq ($(ARCH),x86_64)
+QEMU := qemu-system-x86_64
+QEMU_MACHINE := -m 128M -nographic
+QEMU_BIOS := 
+endif
 
 run: $(IMAGE)
 	@echo "  QEMU    Running..."

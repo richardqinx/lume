@@ -278,7 +278,7 @@ Phase 2 全部完成后，从各 spec 中提取汇总为 `docs/specs/lock_orderi
 |------|------|
 | 构建系统 | GNU Make (非递归模式) |
 | 编译器 | `riscv64-*-gcc` / `riscv64-*-g++` |
-| C++ 标准 | C++17 (`-std=c++17`) |
+| C++ 标准 | C++23 (`-std=c++23`) |
 | 关键编译选项 | `-ffreestanding -nostdlib -fno-exceptions -fno-rtti -mcmodel=medany` |
 | 代码格式化 | `clang-format`（`.clang-format` 配置） |
 | 静态分析 | `clang-tidy`（通过 `bear -- make` 生成 `compile_commands.json`） |

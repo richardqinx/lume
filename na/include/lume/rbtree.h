@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <lume/compiler.h>
 #include <lume/rbtree_types.h>
 
 /* ------------------------------------------------------------------ */
@@ -18,10 +19,6 @@
 #define container_of(ptr, type, member) \
 	reinterpret_cast<type *>( \
 		reinterpret_cast<char *>(ptr) - __builtin_offsetof(type, member))
-#endif
-
-#ifndef READ_ONCE
-#define READ_ONCE(x)  (*(volatile __typeof__(x) *)&(x))
 #endif
 
 /* ------------------------------------------------------------------ */

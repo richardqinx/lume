@@ -13,26 +13,6 @@
 #include <lume/rbtree.h>
 
 /* ------------------------------------------------------------------ */
-/*  Linux-compat macros for freestanding kernel                       */
-/* ------------------------------------------------------------------ */
-
-#ifndef WRITE_ONCE
-#define WRITE_ONCE(x, val)  do { \
-	__asm__ volatile("" ::: "memory"); \
-	(x) = (val); \
-	__asm__ volatile("" ::: "memory"); \
-} while (0)
-#endif
-
-#ifndef unlikely
-#define unlikely(x)   __builtin_expect(!!(x), 0)
-#endif
-
-#ifndef __always_inline
-#define __always_inline  inline __attribute__((always_inline))
-#endif
-
-/* ------------------------------------------------------------------ */
 /*  Augmented callback structure                                      */
 /* ------------------------------------------------------------------ */
 

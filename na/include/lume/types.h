@@ -22,9 +22,12 @@ using int16  = signed short;
 using int32  = signed int;
 using int64  = signed long long;
 
-using size_t  = uint64;
+typedef __SIZE_TYPE__    size_t;
+typedef __PTRDIFF_TYPE__ ptrdiff_t;
 using ssize_t = int64;
 using uintptr = uint64;
+
+#define offsetof(TYPE, MEMBER) __builtin_offsetof(TYPE, MEMBER)
 
 /* Null pointer constant */
 #ifndef nullptr

@@ -40,7 +40,7 @@ struct list_node {
 template <typename T, list_node T::*Member>
 static inline T *list_entry(list_node *node)
 {
-    constexpr size_t off = (size_t)(uintptr) & (((T *)nullptr)->*Member);
+    const size_t off = (size_t)(uintptr) & (((T *)nullptr)->*Member);
     return reinterpret_cast<T *>(reinterpret_cast<uintptr>(node) - off);
 }
 

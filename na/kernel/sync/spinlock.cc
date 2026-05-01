@@ -16,7 +16,7 @@
 #include "spinlock.h"
 #include "cpu_state.h"
 #include <arch/cpu.h>
-#include <lume/panic.h>
+#include <lume/klog.h>
 
 // ============================================================
 // Per-CPU sync state (BSS zero-initialized)

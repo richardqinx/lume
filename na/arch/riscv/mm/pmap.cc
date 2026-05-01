@@ -18,8 +18,8 @@
 #include <lume/addr.h>
 #include <lume/config.h>
 #include <lume/pmm.h>
-#include <lume/panic.h>
 #include <arch/mmu.h>
+#include <lume/klog.h>
 
 namespace pmap {
 

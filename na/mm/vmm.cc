@@ -17,7 +17,7 @@
 #include <lume/types.h>
 #include <lume/addr.h>
 #include <lume/pmm.h>
-#include <lume/panic.h>
+#include <lume/klog.h>
 #include <lume/fdt.h>
 #include <lume/vmm.h>
 #include <arch/pmap.h>

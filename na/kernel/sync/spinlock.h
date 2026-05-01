@@ -13,8 +13,8 @@
  * Reference: docs/specs/spinlock.md
  */
 
-#include <lume/types.h>
 #include <lume/atomic.h>
+#include <lume/types.h>
 #include "cpu_state.h"
 
 class Spinlock {

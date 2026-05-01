@@ -22,7 +22,7 @@
 #include "slab.h"
 #include <lume/pmm.h>
 #include <lume/addr.h>
-#include <lume/panic.h>
+#include <lume/klog.h>
 #include <lume/new.h>
 #include <arch/cpu.h>
 

@@ -20,7 +20,7 @@
 #include <lume/errno.h>
 #include <lume/pmm.h>
 #include <lume/new.h>
-#include <lume/panic.h>
+#include <lume/klog.h>
 #include <arch/pmap.h>
 
 /* ------------------------------------------------------------------ */

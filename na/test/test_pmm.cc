@@ -28,11 +28,11 @@ void selftest_pmm()
         ST_ASSERT(f->state == FrameState::Allocated);
         ST_ASSERT(f->order == 0);
 
-        uint64 pa = frame_to_pa(f);
+        uint64 pa = frame_to_pa(f).raw;
         ST_ASSERT_EQ(pa % kPageSize, 0ULL);  // 4KB aligned
 
-        uint64 va = frame_to_va(f);
-        ST_ASSERT_EQ(va, pa_to_va(pa));
+        uint64 va = frame_to_va(f).raw;
+        ST_ASSERT_EQ(va, pa_to_va(phys_addr(pa)).raw);
 
         pmm_free_frame(f);
     }
@@ -45,7 +45,7 @@ void selftest_pmm()
         ST_ASSERT(f1 != nullptr);
         ST_ASSERT(f2 != nullptr);
         ST_ASSERT_NE(f1, f2);
-        ST_ASSERT_NE(frame_to_pa(f1), frame_to_pa(f2));
+        ST_ASSERT_NE(frame_to_pa(f1).raw, frame_to_pa(f2).raw);
         pmm_free_frame(f2);
         pmm_free_frame(f1);
     }
@@ -54,12 +54,12 @@ void selftest_pmm()
     st_begin("pmm: free then re-alloc (PCP)");
     {
         Frame* f1 = pmm_alloc_frame();
-        uint64 pa1 = frame_to_pa(f1);
+        uint64 pa1 = frame_to_pa(f1).raw;
         pmm_free_frame(f1);
 
         // PCP should return the most recently freed frame
         Frame* f2 = pmm_alloc_frame();
-        uint64 pa2 = frame_to_pa(f2);
+        uint64 pa2 = frame_to_pa(f2).raw;
         ST_ASSERT_EQ(pa1, pa2);
         pmm_free_frame(f2);
     }
@@ -71,7 +71,7 @@ void selftest_pmm()
         ST_ASSERT(f != nullptr);
         ST_ASSERT(f->order == 2);
 
-        uint64 pa = frame_to_pa(f);
+        uint64 pa = frame_to_pa(f).raw;
         ST_ASSERT_EQ(pa % (kPageSize * 4), 0ULL);  // Naturally aligned
 
         pmm_free_frames(f, 2);
@@ -105,8 +105,8 @@ void selftest_pmm()
     {
         Frame* f = pmm_alloc_frame();
         ST_ASSERT(f != nullptr);
-        uint64 pa = frame_to_pa(f);
-        Frame* f2 = pa_to_frame(pa);
+        uint64 pa = frame_to_pa(f).raw;
+        Frame* f2 = pa_to_frame(phys_addr(pa));
         ST_ASSERT_EQ(f, f2);
         pmm_free_frame(f);
     }
@@ -134,7 +134,7 @@ void selftest_pmm()
     {
         Frame* f = pmm_alloc_frames(3);
         ST_ASSERT(f != nullptr);
-        uint64 pa = frame_to_pa(f);
+        uint64 pa = frame_to_pa(f).raw;
         ST_ASSERT_EQ(pa % (kPageSize * 8), 0ULL);
         pmm_free_frames(f, 3);
     }
@@ -143,12 +143,12 @@ void selftest_pmm()
     st_begin("pmm: frame_decref to 0 and reuse (order-0)");
     {
         Frame* f = pmm_alloc_frame();
-        uint64 pa = frame_to_pa(f);
+        uint64 pa = frame_to_pa(f).raw;
         frame_decref(f); // drops 1 -> 0, freeing it
         
         // Next alloc from PCP should give back the same frame
         Frame* f2 = pmm_alloc_frame();
-        ST_ASSERT_EQ(frame_to_pa(f2), pa);
+        ST_ASSERT_EQ(frame_to_pa(f2).raw, pa);
         pmm_free_frame(f2);
     }
     st_pass();
@@ -156,12 +156,12 @@ void selftest_pmm()
     st_begin("pmm: frame_decref to 0 on multi-page blocks (order-3)");
     {
         Frame* f = pmm_alloc_frames(3);
-        uint64 pa = frame_to_pa(f);
+        uint64 pa = frame_to_pa(f).raw;
         frame_decref(f); // Should internally route to pmm_free_frames(f, 3)
         
         // Re-allocate order-3 and see if we get it back (buddy coalescing was respected)
         Frame* f2 = pmm_alloc_frames(3);
-        ST_ASSERT_EQ(frame_to_pa(f2), pa);
+        ST_ASSERT_EQ(frame_to_pa(f2).raw, pa);
         pmm_free_frames(f2, 3);
     }
     st_pass();
@@ -170,7 +170,7 @@ void selftest_pmm()
     {
         // Force split: allocate order-1, free it, allocate two order-0
         Frame* f_ord1 = pmm_alloc_frames(1);
-        uint64 pa1 = frame_to_pa(f_ord1);
+        uint64 pa1 = frame_to_pa(f_ord1).raw;
         pmm_free_frames(f_ord1, 1);
         
         Frame* f0_a = pmm_alloc_frame();
@@ -182,7 +182,7 @@ void selftest_pmm()
         
         // Allocate order-1 again to verify successful coalescing
         Frame* f_ord1_again = pmm_alloc_frames(1);
-        ST_ASSERT_EQ(frame_to_pa(f_ord1_again), pa1);
+        ST_ASSERT_EQ(frame_to_pa(f_ord1_again).raw, pa1);
         pmm_free_frames(f_ord1_again, 1);
     }
     st_pass();
@@ -196,7 +196,7 @@ void selftest_pmm()
         ST_ASSERT(f0 != nullptr);
         ST_ASSERT(f2 != nullptr);
         ST_ASSERT(f0b != nullptr);
-        ST_ASSERT_NE(frame_to_pa(f0), frame_to_pa(f2));
+        ST_ASSERT_NE(frame_to_pa(f0).raw, frame_to_pa(f2).raw);
         
         pmm_free_frame(f0);
         pmm_free_frames(f2, 2);
@@ -225,7 +225,7 @@ void selftest_pmm()
         while (true) {
             Frame* f = pmm_alloc_frames(5);
             if (!f) break;
-            uint64* ptr = reinterpret_cast<uint64*>(frame_to_va(f));
+            uint64* ptr = reinterpret_cast<uint64*>(frame_to_va(f).raw);
             *ptr = reinterpret_cast<uint64>(head);
             // encode order in the second word
             *(ptr + 1) = 5;
@@ -235,7 +235,7 @@ void selftest_pmm()
         while (true) {
             Frame* f = pmm_alloc_frame();
             if (!f) break;
-            uint64* ptr = reinterpret_cast<uint64*>(frame_to_va(f));
+            uint64* ptr = reinterpret_cast<uint64*>(frame_to_va(f).raw);
             *ptr = reinterpret_cast<uint64>(head);
             *(ptr + 1) = 0;
             head = f;
@@ -246,7 +246,7 @@ void selftest_pmm()
         
         // Free everything
         while (head) {
-            uint64* ptr = reinterpret_cast<uint64*>(frame_to_va(head));
+            uint64* ptr = reinterpret_cast<uint64*>(frame_to_va(head).raw);
             Frame* nxt = reinterpret_cast<Frame*>(*ptr);
             uint64 order = *(ptr + 1);
             if (order == 5) pmm_free_frames(head, 5);
@@ -268,11 +268,11 @@ void selftest_pmm()
 
     st_begin("pmm: pmm_get_mem_base / pmm_get_mem_size sanity");
     {
-        uint64 base = pmm_get_mem_base();
+        uint64 base = pmm_get_mem_base().raw;
         uint64 size = pmm_get_mem_size();
 
-        // QEMU virt platform: RAM starts at 0x80000000
-        ST_ASSERT(base >= 0x80000000ULL);
+        // We no longer assert on QEMU specific memory address
+        // ST_ASSERT(base >= 0x80000000ULL);
         ST_ASSERT(size > 0);
         // Size must be page-aligned
         ST_ASSERT_EQ(size % kPageSize, 0ULL);

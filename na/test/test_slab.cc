@@ -200,8 +200,8 @@ void selftest_slab()
         }
         
         // At this point, we completely own all 32 objects of this slab page.
-        uint64 page_pa = ensure_pa(reinterpret_cast<uint64>(base_ptr));
-        Frame* f = pa_to_frame(page_pa);
+        uint64 page_pa = va_to_pa(virt_addr(reinterpret_cast<uint64>(base_ptr))).raw;
+        Frame* f = pa_to_frame(phys_addr(page_pa));
         
         ST_ASSERT(f->state == FrameState::Slab);
         ST_ASSERT(f->slab.obj_count == 32);

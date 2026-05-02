@@ -24,6 +24,12 @@
 
 namespace pmap {
 
+/*
+ * Before the first pmap::activate(), CPU runs on entry.S bootstrap page table
+ * (fixed direct-map base). After activation, runtime (KASLR) base is valid.
+ */
+static bool g_runtime_mapping_ready = false;
+
 /* PTE bit definitions */
 inline constexpr uint64 PTE_V = 1ULL << 0;
 inline constexpr uint64 PTE_R = 1ULL << 1;
@@ -59,7 +65,10 @@ static inline uint64 pa_to_pte(uint64 pa, uint64 flags)
 /* Convert PA to kernel VA for accessing page table contents */
 static inline uint64 *pa_to_ptr(uint64 pa)
 {
-    return reinterpret_cast<uint64 *>(pa_to_va(phys_addr(pa)).raw);
+    uint64 va = g_runtime_mapping_ready
+                    ? pa_to_va(phys_addr(pa)).raw
+                    : boot_pa_to_va(phys_addr(pa)).raw;
+    return reinterpret_cast<uint64 *>(va);
 }
 
 /* Allocate a zeroed page for a page table level.
@@ -203,6 +212,7 @@ void activate(uint64 root_pa)
 {
     arch::mmu::set_page_table(root_pa);
     arch::mmu::flush_tlb_all();
+    g_runtime_mapping_ready = true;
 }
 
 uint64 vm_perm_to_pte(uint64 vm_perm)

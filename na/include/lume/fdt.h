@@ -82,3 +82,4 @@ DeviceNode *fdt_get_node_by_path(const char *path);
 // Early scan wrappers (delegate to FdtManager static methods).
 void fdt_early_get_mem_info(uint64 *base, uint64 *size);
 void fdt_early_get_uart_info(uint64 *uart_addr, uint64 *uart_size);
+void fdt_early_get_kaslr_seed(uint64 *seed);

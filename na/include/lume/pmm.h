@@ -22,9 +22,10 @@
 #include <lume/types.h>
 #include <lume/frame.h>
 #include <lume/addr_types.h>
+#include <lume/config.h>
 
 /* Buddy system constants */
-inline constexpr int kMaxOrder = 11;           // Orders 0..10 → 4KB..4MB
+inline constexpr int kMaxOrder = CONFIG_MAX_ORDER;  // Orders 0..(N-1)
 
 /* Per-CPU cache dynamic parameters (calculated in pmm_init) */
 extern uint32 g_pcp_high_watermark;

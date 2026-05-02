@@ -15,10 +15,21 @@
 
 static uint64 g_uart_pa = 0;
 static uint64 g_uart_size = 0;
+static bool g_runtime_mapping_ready = false;
 
 extern "C" void early_putc(char c) {
     if (!g_uart_pa) return;
-    volatile auto* uart = reinterpret_cast<volatile uint8*>(pa_to_va(phys_addr(g_uart_pa)).raw);
+
+    /*
+     * Before vmm_init() activates the final page table, UART MMIO is only
+     * reachable via the bootstrap fixed direct map from entry.S.
+     * After activation, switch to the runtime (possibly KASLR-slid) base.
+     */
+    uint64 uart_va = g_runtime_mapping_ready
+                         ? pa_to_va(phys_addr(g_uart_pa)).raw
+                         : boot_pa_to_va(phys_addr(g_uart_pa)).raw;
+
+    volatile auto* uart = reinterpret_cast<volatile uint8*>(uart_va);
     *uart = static_cast<uint8>(c);
 }
 
@@ -44,4 +55,8 @@ void console_init() {
     if (g_uart_pa != 0 && g_uart_size != 0) {
         vmm_map_kernel_mmio(g_uart_pa, g_uart_size);
     }
+}
+
+void console_use_runtime_mapping() {
+    g_runtime_mapping_ready = true;
 }

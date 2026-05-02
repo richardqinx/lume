@@ -126,7 +126,7 @@ static inline uint64 read_cells(const uint8 *data, uint32 cells) {
 /* ------------------------------------------------------------------ */
 
 FdtManager::FdtManager(uint64 fdt_paddr)
-    : fdt_paddr_(pa_to_va(phys_addr(fdt_paddr)).raw) {}
+  : fdt_paddr_(fdt_paddr) {}
 
 /* ------------------------------------------------------------------ */
 /*  Phase 1: Early scan — memory layout                               */
@@ -352,14 +352,15 @@ void FdtManager::early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr,
 /* ------------------------------------------------------------------ */
 
 void FdtManager::unflatten() {
-  const fdt_header *hdr = reinterpret_cast<const fdt_header *>(fdt_paddr_);
+  const uint64 fdt_va = pa_to_va(phys_addr(fdt_paddr_)).raw;
+  const fdt_header *hdr = reinterpret_cast<const fdt_header *>(fdt_va);
   if (bswap32(hdr->magic) != FDT_MAGIC)
     kernel_panic("fdt unflatten: invalid magic", nullptr);
 
   const uint8 *dt_struct =
-      reinterpret_cast<const uint8 *>(fdt_paddr_) + bswap32(hdr->off_dt_struct);
+      reinterpret_cast<const uint8 *>(fdt_va) + bswap32(hdr->off_dt_struct);
   const char *dt_strings =
-      reinterpret_cast<const char *>(fdt_paddr_) + bswap32(hdr->off_dt_strings);
+      reinterpret_cast<const char *>(fdt_va) + bswap32(hdr->off_dt_strings);
 
   uint32 offset = 0;
 

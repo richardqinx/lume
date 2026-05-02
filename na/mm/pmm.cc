@@ -7,11 +7,9 @@
  * Buddy allocator with Per-CPU single-page caches (PCP).
  *
  * Initialization sequence (called by BSP in single-core period):
- *   1. Query FDT for physical memory base and size.
- *   2. Carve out space for the frame_map array at the start of free memory
- *      (immediately after _kernel_end, page-aligned).
- *   3. Initialize all Frame descriptors as Free.
- *   4. Feed free frames into the buddy system at the highest possible order.
+ *   1. memblock + vmm_init allocate and map the frame_map at VMEMMAP.
+ *   2. Zero and mark all Frame descriptors reserved by default.
+ *   3. Carve free regions from memblock into the buddy system.
  *
  * The frame_map is a flat array indexed by physical page frame number (PFN).
  * PFN = (pa - mem_base) / PAGE_SIZE.  This keeps address conversion O(1).
@@ -68,17 +66,26 @@ uint32 g_pcp_batch_size = 0;
  * PFN = (pa - g_mem_base) / kPageSize
  */
 static inline uint64 pa_to_frame_index(uint64 pa) {
+  if (pa < g_mem_base || pa >= g_mem_base + g_num_frames * kPageSize)
+    kernel_panic("pa_to_frame: physical address outside managed range");
   return (pa - g_mem_base) / kPageSize;
 }
 
 static inline uint64 frame_index_to_pa(uint64 idx) {
+  if (idx >= g_num_frames)
+    kernel_panic("frame_to_pa: frame index outside managed range");
   return g_mem_base + idx * kPageSize;
 }
 
 PhysAddr frame_to_pa(const Frame *frame) {
-  uint64 idx = static_cast<uint64>(frame - g_frame_map);
-  if (frame < g_frame_map || idx >= g_num_frames)
+  uintptr base = reinterpret_cast<uintptr>(g_frame_map);
+  uintptr addr = reinterpret_cast<uintptr>(frame);
+  uintptr end = base + g_num_frames * sizeof(Frame);
+
+  if (addr < base || addr >= end)
     kernel_panic("frame_to_pa: frame outside frame_map bounds");
+
+  uint64 idx = (addr - base) / sizeof(Frame);
   return phys_addr(frame_index_to_pa(idx));
 }
 
@@ -391,10 +398,19 @@ void pmm_init() {
    *    No relocation needed — frame_map starts life at the right VA. */
   g_frame_map_pa = vmm_get_frame_map_pa();
   g_frame_map_bytes = vmm_get_frame_map_size();
-  g_frame_map = reinterpret_cast<Frame *>(arch::kVmemmapBase);
+  g_frame_map = reinterpret_cast<Frame *>(arch::g_vmemmap_base);
 
   /* 4. Zero out the entire frame_map */
   zero_range(g_frame_map, g_frame_map_bytes);
+
+  /* 4b. Default every frame descriptor to reserved/non-free. */
+  for (uint64 i = 0; i < g_num_frames; i++) {
+    Frame *f = &g_frame_map[i];
+    f->refcount.store(0, __ATOMIC_RELAXED);
+    f->state = FrameState::Allocated;
+    f->order = 0;
+    f->free.free_link.init();
+  }
 
   /* 5. Initialize buddy free list heads */
   g_pmm_lock.init("pmm");

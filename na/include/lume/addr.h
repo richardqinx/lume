@@ -29,6 +29,23 @@ inline PhysAddr va_to_pa(VirtAddr va)
     return PhysAddr{va.raw - arch::g_direct_map_base};
 }
 
+/*
+ * Early-boot conversions pinned to the bootstrap direct-map base.
+ *
+ * Use these only before vmm_init() activates the final kernel page table.
+ * They are required when KASLR has already randomized g_direct_map_base,
+ * but the CPU is still running on the bootstrap mapping built in entry.S.
+ */
+inline VirtAddr boot_pa_to_va(PhysAddr pa)
+{
+    return VirtAddr{pa.raw + arch::kDirectMapBaseDefault};
+}
+
+inline PhysAddr boot_va_to_pa(VirtAddr va)
+{
+    return PhysAddr{va.raw - arch::kDirectMapBaseDefault};
+}
+
 /* Align up to page boundary */
 inline uint64 page_align_up(uint64 addr)
 {

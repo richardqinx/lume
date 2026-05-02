@@ -50,7 +50,7 @@ uint64 vmm_get_num_frames() { return g_vmemmap_num_frames; }
 
 /* Convert a linker symbol to PA (kernel is executing in higher-half VA). */
 static inline uint64 sym_to_pa(const void *sym) {
-  return va_to_pa(virt_addr(reinterpret_cast<uint64>(sym))).raw;
+  return boot_va_to_pa(virt_addr(reinterpret_cast<uint64>(sym))).raw;
 }
 
 /* Map a PA range into the kernel page table via the direct map. */
@@ -61,6 +61,18 @@ static void map_range(uint64 root, uint64 pa_start, uint64 pa_end,
     int ret = pmap::map(root, va, pa, perm | pmap::PTE_G);
     if (ret != 0) {
       kernel_panic("vmm_init: pmap::map failed");
+    }
+  }
+}
+
+/* Map a PA range into the kernel page table at the fixed linked VA. */
+static void map_range_linked(uint64 root, uint64 pa_start, uint64 pa_end,
+                             uint64 perm) {
+  for (uint64 pa = pa_start; pa < pa_end; pa += kPageSize) {
+    uint64 va = boot_pa_to_va(phys_addr(pa)).raw;
+    int ret = pmap::map(root, va, pa, perm | pmap::PTE_G);
+    if (ret != 0) {
+      kernel_panic("vmm_init: pmap::map (linked) failed");
     }
   }
 }
@@ -117,14 +129,19 @@ void vmm_init() {
   uint64 mem_size = memblock_get_mem_size();
   uint64 mem_end = mem_base + mem_size;
 
-  /* 3. Map kernel .text (RX) */
-  map_range(root, text_start, text_end, pmap::PTE_R | pmap::PTE_X);
+  /* 3. Map kernel image at FIXED linked VA.
+   *
+   * Kernel text/data are linked at the bootstrap higher-half addresses
+   * (kDirectMapBaseDefault + PA). They must remain executable/readable at
+   * those addresses until full kernel-image relocation is implemented.
+   */
+  map_range_linked(root, text_start, text_end, pmap::PTE_R | pmap::PTE_X);
 
-  /* 4. Map .rodata (R) */
-  map_range(root, ro_start, ro_end, pmap::PTE_R);
+  /* 4. Map .rodata (R) at fixed linked VA */
+  map_range_linked(root, ro_start, ro_end, pmap::PTE_R);
 
-  /* 5. Map .data + .bss (RW) */
-  map_range(root, data_start, bss_end, pmap::PTE_R | pmap::PTE_W);
+  /* 5. Map .data + .bss (RW) at fixed linked VA */
+  map_range_linked(root, data_start, bss_end, pmap::PTE_R | pmap::PTE_W);
 
   /* 6. Map remaining physical memory after kernel (RW) */
   uint64 after_kernel = page_align_up(sym_to_pa(_kernel_end));
@@ -150,8 +167,8 @@ void vmm_init() {
   kprintf("[vmm] vmemmap: %llu frames, %llu KB at PA 0x%llx\n", num_frames,
           frame_map_span / 1024, frame_map_pa);
 
-  /* Map frame_map at kVmemmapBase, using 2MB pages where possible */
-  map_range_at_huge(root, arch::kVmemmapBase, frame_map_pa,
+  /* Map frame_map at g_vmemmap_base (randomised by KASLR), using 2MB pages where possible */
+  map_range_at_huge(root, arch::g_vmemmap_base, frame_map_pa,
                     frame_map_pa + frame_map_span, pmap::PTE_R | pmap::PTE_W);
 
   /* Export for pmm_init() */
@@ -166,7 +183,10 @@ void vmm_init() {
   /* 9. Activate the new page table */
   pmap::activate(root);
 
-  kprintf("[vmm] vmm_init complete (vmemmap at 0x%llx)\n", arch::kVmemmapBase);
+  /* Console MMIO access must now use runtime (KASLR) direct-map base. */
+  console_use_runtime_mapping();
+
+  kprintf("[vmm] vmm_init complete (vmemmap at 0x%llx)\n", arch::g_vmemmap_base);
 }
 
 void vmm_init_ap() {

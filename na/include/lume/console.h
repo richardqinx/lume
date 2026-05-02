@@ -13,3 +13,10 @@ void console_early_init(uint64 fdt_paddr);
 
 /* Full console initialization. Maps MMIO. */
 void console_init();
+
+/*
+ * Notify console that the runtime kernel page table is active.
+ * After this point early_putc() must use runtime direct-map base
+ * instead of the bootstrap fixed base.
+ */
+void console_use_runtime_mapping();

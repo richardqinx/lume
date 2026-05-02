@@ -21,6 +21,7 @@
 
 #include <lume/types.h>
 #include <lume/frame.h>
+#include <lume/addr_types.h>
 
 /* Buddy system constants */
 inline constexpr int kMaxOrder = 11;           // Orders 0..10 → 4KB..4MB
@@ -34,9 +35,10 @@ extern uint32 g_pcp_batch_size;
 /* ================================================================== */
 
 /*
- * Initialize the PMM.  Called by BSP after fdt_init().
- * Discovers memory via FDT, places frame_map, and populates buddy lists.
- * Panics on failure (no memory, bad FDT, etc.).
+ * Initialize the PMM.  Called by BSP after vmm_init() + memblock.
+ * frame_map is already mapped at VMEMMAP VA by vmm_init.
+ * Populates buddy lists from memblock's free regions, then retires memblock.
+ * Panics on failure.
  */
 void pmm_init();
 
@@ -64,14 +66,14 @@ void frame_decref(Frame* frame);
 /* --- Address conversion --- */
 
 // Convert a Frame* to its physical address.
-uint64 frame_to_pa(const Frame* frame);
+PhysAddr frame_to_pa(const Frame* frame);
 
 // Convert a physical address to its Frame*.
-Frame* pa_to_frame(uint64 pa);
+Frame* pa_to_frame(PhysAddr pa);
 
 // Convert a Frame* to a kernel virtual address.
-uint64 frame_to_va(const Frame* frame);
+VirtAddr frame_to_va(const Frame* frame);
 
 // Query PMM memory range (for VMM kernel mapping)
-uint64 pmm_get_mem_base();
+PhysAddr pmm_get_mem_base();
 uint64 pmm_get_mem_size();

@@ -14,36 +14,19 @@
 
 #include <lume/types.h>
 #include <lume/config.h>
+#include <lume/addr_types.h>
 #include <arch/config.h>
 
-/* Convert physical address to kernel virtual address */
-inline uint64 pa_to_va(uint64 pa)
+/* Convert physical address to kernel virtual address (direct map). */
+inline VirtAddr pa_to_va(PhysAddr pa)
 {
-    return pa + arch::kVAOffset;
+    return VirtAddr{pa.raw + arch::g_direct_map_base};
 }
 
-/* Convert kernel virtual address to physical address */
-inline uint64 va_to_pa(uint64 va)
+/* Convert kernel virtual address to physical address (direct map). */
+inline PhysAddr va_to_pa(VirtAddr va)
 {
-    return va - arch::kVAOffset;
-}
-
-/* Check if an address is a kernel virtual address */
-inline bool is_kernel_va(uint64 addr)
-{
-    return addr >= arch::kVAOffset;
-}
-
-/* Convert an address that might be VA or PA to PA */
-inline uint64 ensure_pa(uint64 addr)
-{
-    return is_kernel_va(addr) ? va_to_pa(addr) : addr;
-}
-
-/* Convert an address that might be VA or PA to VA */
-inline uint64 ensure_va(uint64 addr)
-{
-    return is_kernel_va(addr) ? addr : pa_to_va(addr);
+    return PhysAddr{va.raw - arch::g_direct_map_base};
 }
 
 /* Align up to page boundary */
@@ -58,14 +41,34 @@ inline uint64 page_align_down(uint64 addr)
     return addr & ~(kPageSize - 1);
 }
 
-/* Convert physical address to page frame number (PFN) */
-inline uint64 pa_to_pfn(uint64 pa)
+inline PhysAddr page_align_up(PhysAddr addr)
 {
-    return pa / kPageSize;
+    return PhysAddr{page_align_up(addr.raw)};
+}
+
+inline PhysAddr page_align_down(PhysAddr addr)
+{
+    return PhysAddr{page_align_down(addr.raw)};
+}
+
+inline VirtAddr page_align_up(VirtAddr addr)
+{
+    return VirtAddr{page_align_up(addr.raw)};
+}
+
+inline VirtAddr page_align_down(VirtAddr addr)
+{
+    return VirtAddr{page_align_down(addr.raw)};
+}
+
+/* Convert physical address to page frame number (PFN) */
+inline Pfn pa_to_pfn(PhysAddr pa)
+{
+    return Pfn{pa.raw / kPageSize};
 }
 
 /* Convert page frame number (PFN) to physical address */
-inline uint64 pfn_to_pa(uint64 pfn)
+inline PhysAddr pfn_to_pa(Pfn pfn)
 {
-    return pfn * kPageSize;
+    return PhysAddr{pfn.raw * kPageSize};
 }

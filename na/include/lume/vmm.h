@@ -72,6 +72,12 @@ void vmm_init_ap();
 /* Map MMIO device region to the active kernel page table */
 void vmm_map_kernel_mmio(uint64 pa, uint64 size);
 
+/* Query frame_map allocation (set by vmm_init, read by pmm_init).
+ * Returns the PA, byte size, and frame count of the vmemmap region. */
+uint64 vmm_get_frame_map_pa();
+uint64 vmm_get_frame_map_size();
+uint64 vmm_get_num_frames();
+
 /* User space memory management (VMA & Demand Paging) */
 int vmm_map_user(VmSpace* space, uint64 va, uint64 len, uint64 perm);
 int vmm_unmap_user(VmSpace* space, uint64 va, uint64 len);

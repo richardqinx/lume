@@ -18,6 +18,7 @@
 #include <lume/addr.h>
 #include <lume/config.h>
 #include <lume/pmm.h>
+#include <lume/memblock.h>
 #include <arch/mmu.h>
 #include <lume/klog.h>
 
@@ -58,21 +59,33 @@ static inline uint64 pa_to_pte(uint64 pa, uint64 flags)
 /* Convert PA to kernel VA for accessing page table contents */
 static inline uint64 *pa_to_ptr(uint64 pa)
 {
-    return reinterpret_cast<uint64 *>(pa_to_va(pa));
+    return reinterpret_cast<uint64 *>(pa_to_va(phys_addr(pa)).raw);
 }
 
 /* Allocate a zeroed page for a page table level.
+ * During early boot (before PMM), uses memblock.
+ * After PMM init, uses the buddy allocator.
  * Returns PA of the new page, or 0 on failure. */
 static uint64 alloc_pt_page()
 {
-    Frame *f = pmm_alloc_frame();
-    if (!f)
+    uint64 pa;
+    if (memblock_is_active()) {
+        pa = memblock_alloc(kPageSize, kPageSize);
+    } else {
+        Frame *f = pmm_alloc_frame();
+        if (!f) {
+            return 0;
+        }
+        pa = frame_to_pa(f).raw;
+    }
+    if (!pa) {
         return 0;
-    uint64 pa = frame_to_pa(f);
+    }
     /* Zero the page */
     uint64 *ptr = pa_to_ptr(pa);
-    for (int i = 0; i < kPtePerPage; i++)
+    for (int i = 0; i < kPtePerPage; i++) {
         ptr[i] = 0;
+    }
     return pa;
 }
 
@@ -97,13 +110,13 @@ void destroy(uint64 root_pa)
                 if (!(l1[j] & (PTE_R | PTE_W | PTE_X))) {
                     /* L0 page table */
                     uint64 l0_pa = pte_to_pa(l1[j]);
-                    pmm_free_frame(pa_to_frame(l0_pa));
+                    pmm_free_frame(pa_to_frame(phys_addr(l0_pa)));
                 }
             }
-            pmm_free_frame(pa_to_frame(l1_pa));
+            pmm_free_frame(pa_to_frame(phys_addr(l1_pa)));
         }
     }
-    pmm_free_frame(pa_to_frame(root_pa));
+    pmm_free_frame(pa_to_frame(phys_addr(root_pa)));
 }
 
 int map(uint64 root_pa, uint64 va, uint64 pa, uint64 perm)
@@ -125,6 +138,33 @@ int map(uint64 root_pa, uint64 va, uint64 pa, uint64 perm)
     /* Level 0: install the leaf PTE */
     uint64 idx = vpn(va, 0);
     table[idx] = pa_to_pte(pa, perm | PTE_V | PTE_A | PTE_D);
+    return 0;
+}
+
+int map_2mb(uint64 root_pa, uint64 va, uint64 pa, uint64 perm)
+{
+    /* VA and PA must be 2MB-aligned */
+    constexpr uint64 k2MB = 2ULL * 1024 * 1024;
+    if ((va & (k2MB - 1)) != 0 || (pa & (k2MB - 1)) != 0) {
+        return -22; /* -EINVAL */
+    }
+
+    uint64 *table = pa_to_ptr(root_pa);
+
+    /* Walk L2: create intermediate table if needed */
+    uint64 idx2 = vpn(va, 2);
+    if (!(table[idx2] & PTE_V)) {
+        uint64 child_pa = alloc_pt_page();
+        if (!child_pa) {
+            return -12; /* -ENOMEM */
+        }
+        table[idx2] = pa_to_pte(child_pa, PTE_V);
+    }
+    table = pa_to_ptr(pte_to_pa(table[idx2]));
+
+    /* L1: install leaf PTE (2MB mega page) */
+    uint64 idx1 = vpn(va, 1);
+    table[idx1] = pa_to_pte(pa, perm | PTE_V | PTE_A | PTE_D);
     return 0;
 }
 

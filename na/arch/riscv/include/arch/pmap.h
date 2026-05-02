@@ -29,6 +29,7 @@ inline constexpr uint64 PTE_D = 1ULL << 7;
 uint64 create();
 void destroy(uint64 root_pa);
 int map(uint64 root_pa, uint64 va, uint64 pa, uint64 perm);
+int map_2mb(uint64 root_pa, uint64 va, uint64 pa, uint64 perm);
 void unmap(uint64 root_pa, uint64 va);
 bool lookup(uint64 root_pa, uint64 va, uint64* pa_out);
 void activate(uint64 root_pa);

@@ -16,8 +16,12 @@
 # ============================================================
 # Build Configuration
 # ============================================================
-ARCH    ?= riscv
 BUILD   := build
+
+# Load Kconfig infrastructure (reads .config, sets KCPPFLAGS)
+include scripts/Kconfig.mk
+
+ARCH    ?= $(CONFIG_ARCH)
 TARGET  := $(BUILD)/kernel.elf
 IMAGE   := $(BUILD)/kernel.bin
 LDS_SRC := arch/$(ARCH)/kernel/lumeos.lds.S
@@ -74,11 +78,13 @@ include lib/module.mk
 include test/module.mk
 
 # Compiler flags (defined AFTER includes so INCLUDES is complete)
-CFLAGS   := $(WARNINGS) -O2 -g -DDEBUG \
+CFLAGS   := $(WARNINGS) -O2 -g \
             -ffreestanding -nostdlib \
             -mcmodel=medany \
             -MMD -MP \
-            $(INCLUDES)
+            $(KCPPFLAGS) \
+            $(INCLUDES) \
+            -I$(BUILD)/generated
 
 # C flags for musl libc sources: add libc-shim headers first
 CFLAGS_LIBC := $(CFLAGS) -Iinclude/libc-shim \
@@ -106,9 +112,16 @@ DEPS := $(OBJS:.o=.d)
 # ============================================================
 # Build Rules
 # ============================================================
-.PHONY: all clean run debug fmt disasm
+.PHONY: all clean run debug fmt disasm defconfig savedefconfig showconfig
 
 all: $(IMAGE)
+
+# Generate autoconf.h before any compilation
+$(AUTOCONF_H): scripts/Kconfig.mk $(wildcard .config)
+	$(generate-autoconf)
+
+# All objects depend on autoconf.h
+$(OBJS): $(AUTOCONF_H)
 
 # Preprocess linker script template (.lds.S → .lds)
 $(LINKER_SCRIPT): $(LDS_SRC) include/lume/lumeos.lds.h
@@ -207,3 +220,4 @@ info:
 	@echo "SRCS_CC = $(SRCS_CC)"
 	@echo "SRCS_S  = $(SRCS_S)"
 	@echo "OBJS    = $(OBJS)"
+	@echo "KCPPFLAGS = $(KCPPFLAGS)"

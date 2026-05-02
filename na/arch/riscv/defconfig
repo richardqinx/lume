@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Richard Qin
+#
+# LumeOS Default Kernel Configuration — RISC-V (virt)
+#
+# This is the "golden" default configuration for the RISC-V virt platform.
+# To customise, copy this file to the source root as '.config':
+#
+#   cp arch/riscv/defconfig .config
+#   $EDITOR .config
+#   make
+#
+# Any variable not set here inherits its default from scripts/Kconfig.mk.
+# ======================================================================
+
+# --- Platform -----------------------------------------------------------
+CONFIG_ARCH             = riscv
+
+# --- CPU / SMP ----------------------------------------------------------
+CONFIG_NR_CPUS          = 8
+
+# --- Scheduler ----------------------------------------------------------
+CONFIG_HZ               = 100
+CONFIG_NR_PRIORITIES    = 32
+
+# --- Memory Management --------------------------------------------------
+CONFIG_PAGE_SIZE        = 4096
+CONFIG_MAX_ORDER        = 11
+CONFIG_KERNEL_STACK_SIZE = 8192
+
+# --- Security / Hardening -----------------------------------------------
+CONFIG_KASLR            = y
+CONFIG_STACK_CANARY     = y
+
+# --- Debug ---------------------------------------------------------------
+CONFIG_DEBUG            = y
+CONFIG_DEBUG_LOCKS      = y
+CONFIG_SELFTEST         = y
+CONFIG_KLOG             = y

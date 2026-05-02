@@ -25,3 +25,5 @@ vgcore.*
 core
 .DS_Store
 Thumbs.db
+# Kernel build configuration (per-developer)
+.config

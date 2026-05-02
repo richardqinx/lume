@@ -5,6 +5,13 @@
 
 #include <lume/types.h>
 
+enum class RandomSeedSource : uint8 {
+	Unknown = 0,
+	FdtProvided,
+	HwRandom,
+	CycleFallback,
+};
+
 /*
  * MI: Machine-Independent Random Number Generator API
  *
@@ -24,3 +31,8 @@ void get_random_bytes(void* buf, size_t len);
 
 /* Inject entropy (for future interrupt/device mixing) */
 void add_device_randomness(const void* buf, size_t len);
+
+/* Early-seed metadata (for boot diagnostics/KASLR logs). */
+RandomSeedSource random_early_seed_source();
+uint64 random_early_seed_value();
+const char* random_seed_source_name(RandomSeedSource source);

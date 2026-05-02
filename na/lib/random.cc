@@ -15,6 +15,8 @@
 
 static uint64 g_state[4];
 static bool g_initialized = false;
+static uint64 g_init_seed = 0;
+static RandomSeedSource g_seed_source = RandomSeedSource::Unknown;
 
 static inline uint64 rotl(const uint64 x, int k) {
     return (x << k) | (x >> (64 - k));
@@ -32,15 +34,21 @@ void random_early_init(uint64 seed)
 {
     if (g_initialized) return;
 
+    RandomSeedSource source = RandomSeedSource::Unknown;
+
     /* If seed is 0 (not provided by bootloader), try hardware */
     if (seed == 0) {
         uint64 hw_val;
         if (arch::get_hw_random(hw_val)) {
             seed = hw_val;
+            source = RandomSeedSource::HwRandom;
         } else {
             /* Fallback: use boot cycles mixed with a constant */
             seed = arch::get_cycles() ^ 0xdeadbeefbadc0ffeULL;
+            source = RandomSeedSource::CycleFallback;
         }
+    } else {
+        source = RandomSeedSource::FdtProvided;
     }
 
     uint64 sm_state = seed;
@@ -49,8 +57,11 @@ void random_early_init(uint64 seed)
     g_state[2] = splitmix64(sm_state);
     g_state[3] = splitmix64(sm_state);
 
+    g_init_seed = seed;
+    g_seed_source = source;
     g_initialized = true;
-    kprintf("[random] early PRNG initialized, seed=0x%llx\n", seed);
+    kprintf("[random] early PRNG initialized, seed=0x%llx, source=%s\n",
+            seed, random_seed_source_name(source));
 }
 
 uint64 get_random_u64()
@@ -113,4 +124,29 @@ void add_device_randomness(const void* buf, size_t len)
     
     g_state[0] ^= mix;
     g_state[1] ^= arch::get_cycles();
+}
+
+RandomSeedSource random_early_seed_source()
+{
+    return g_seed_source;
+}
+
+uint64 random_early_seed_value()
+{
+    return g_init_seed;
+}
+
+const char* random_seed_source_name(RandomSeedSource source)
+{
+    switch (source) {
+    case RandomSeedSource::FdtProvided:
+        return "fdt";
+    case RandomSeedSource::HwRandom:
+        return "hw";
+    case RandomSeedSource::CycleFallback:
+        return "cycle";
+    case RandomSeedSource::Unknown:
+    default:
+        return "unknown";
+    }
 }

@@ -18,7 +18,7 @@ static uint64 g_uart_size = 0;
 
 extern "C" void early_putc(char c) {
     if (!g_uart_pa) return;
-    volatile auto* uart = reinterpret_cast<volatile uint8*>(pa_to_va(g_uart_pa));
+    volatile auto* uart = reinterpret_cast<volatile uint8*>(pa_to_va(phys_addr(g_uart_pa)).raw);
     *uart = static_cast<uint8>(c);
 }
 

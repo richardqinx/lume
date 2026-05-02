@@ -36,7 +36,7 @@
  */
 static inline void* frame_to_page_va(Frame* f)
 {
-    return reinterpret_cast<void*>(pa_to_va(frame_to_pa(f)));
+    return reinterpret_cast<void*>(pa_to_va(frame_to_pa(f)).raw);
 }
 
 /* Round up x to the next multiple of align (align must be power of 2) */
@@ -193,9 +193,9 @@ void KmemCache::free(void* obj)
     uint64 obj_addr = reinterpret_cast<uint64>(obj);
 
     /* Convert VA to PA. Like pmm.cc, handle both PA and VA cases. */
-    uint64 obj_pa = ensure_pa(obj_addr);
+    uint64 obj_pa = va_to_pa(virt_addr(obj_addr)).raw;
     uint64 page_pa = obj_pa & ~(kPageSize - 1);
-    Frame* f = pa_to_frame(page_pa);
+    Frame* f = pa_to_frame(phys_addr(page_pa));
 
     if (f->state != FrameState::Slab || f->slab.cache != this)
         kernel_panic("slab free: object does not belong to this cache");
@@ -255,7 +255,7 @@ void* kmalloc(uint32 size)
         Frame* f = pmm_alloc_frames(order);
         if (!f)
             return nullptr;
-        return reinterpret_cast<void*>(pa_to_va(frame_to_pa(f)));
+        return reinterpret_cast<void*>(pa_to_va(frame_to_pa(f)).raw);
     }
 
     KmemCache* cache = find_cache(size);
@@ -270,9 +270,9 @@ void kfree(void* ptr)
         return;
 
     uint64 addr = reinterpret_cast<uint64>(ptr);
-    uint64 pa = ensure_pa(addr);
+    uint64 pa = va_to_pa(virt_addr(addr)).raw;
     uint64 page_pa = pa & ~(kPageSize - 1);
-    Frame* f = pa_to_frame(page_pa);
+    Frame* f = pa_to_frame(phys_addr(page_pa));
 
     if (f->state == FrameState::Slab) {
         KmemCache* cache = f->slab.cache;

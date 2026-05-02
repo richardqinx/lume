@@ -158,7 +158,7 @@ int vmm_handle_page_fault(VmSpace* space, uint64 fault_addr, uint64 cause) {
     Frame* f = pmm_alloc_frame();
     if (!f) return -ENOMEM;
 
-    uint64 pa = frame_to_pa(f);
+    uint64 pa = frame_to_pa(f).raw;
 
     /* Translate MI permission flags to hardware PTE bits (MD layer) */
     uint64 pte_perm = pmap::vm_perm_to_pte(vma->perm);

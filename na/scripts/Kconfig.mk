@@ -49,7 +49,10 @@ CONFIG_KERNEL_STACK_SIZE ?= 8192
 
 # --- Security / Hardening -------------------------------------------
 CONFIG_KASLR            ?= y
+CONFIG_KASLR_POLICY_ID  ?= 0
+CONFIG_KASLR_LOG_LEVEL  ?= 1
 CONFIG_STACK_CANARY     ?= y
+CONFIG_KERNEL_COMPRESSED ?= y
 
 # --- Debug -----------------------------------------------------------
 CONFIG_DEBUG            ?= y
@@ -98,6 +101,8 @@ KCPPFLAGS += -DCONFIG_KERNEL_STACK_SIZE=$(CONFIG_KERNEL_STACK_SIZE)
 ifeq ($(CONFIG_KASLR),y)
 KCPPFLAGS += -DCONFIG_KASLR=1
 endif
+KCPPFLAGS += -DCONFIG_KASLR_POLICY_ID=$(CONFIG_KASLR_POLICY_ID)
+KCPPFLAGS += -DCONFIG_KASLR_LOG_LEVEL=$(CONFIG_KASLR_LOG_LEVEL)
 ifeq ($(CONFIG_STACK_CANARY),y)
 KCPPFLAGS += -DCONFIG_STACK_CANARY=1
 endif
@@ -112,6 +117,9 @@ KCPPFLAGS += -DCONFIG_SELFTEST=1
 endif
 ifeq ($(CONFIG_KLOG),y)
 KCPPFLAGS += -DCONFIG_KLOG=1
+endif
+ifeq ($(CONFIG_KERNEL_COMPRESSED),y)
+KCPPFLAGS += -DCONFIG_KERNEL_COMPRESSED=1
 endif
 
 # ------------------------------------------------------------------
@@ -147,6 +155,8 @@ define generate-autoconf
 	@echo ""                                                >> $(AUTOCONF_H)
 	@echo "/* Security */"                                  >> $(AUTOCONF_H)
 	$(if $(filter y,$(CONFIG_KASLR)),       @echo "#define CONFIG_KASLR           1"  >> $(AUTOCONF_H))
+	@echo "#define CONFIG_KASLR_POLICY_ID  $(CONFIG_KASLR_POLICY_ID)"  >> $(AUTOCONF_H)
+	@echo "#define CONFIG_KASLR_LOG_LEVEL  $(CONFIG_KASLR_LOG_LEVEL)"  >> $(AUTOCONF_H)
 	$(if $(filter y,$(CONFIG_STACK_CANARY)), @echo "#define CONFIG_STACK_CANARY    1"  >> $(AUTOCONF_H))
 	@echo ""                                                >> $(AUTOCONF_H)
 	@echo "/* Debug */"                                     >> $(AUTOCONF_H)
@@ -154,6 +164,7 @@ define generate-autoconf
 	$(if $(filter y,$(CONFIG_DEBUG_LOCKS)),  @echo "#define CONFIG_DEBUG_LOCKS     1"  >> $(AUTOCONF_H))
 	$(if $(filter y,$(CONFIG_SELFTEST)),     @echo "#define CONFIG_SELFTEST        1"  >> $(AUTOCONF_H))
 	$(if $(filter y,$(CONFIG_KLOG)),         @echo "#define CONFIG_KLOG            1"  >> $(AUTOCONF_H))
+	$(if $(filter y,$(CONFIG_KERNEL_COMPRESSED)), @echo "#define CONFIG_KERNEL_COMPRESSED 1"  >> $(AUTOCONF_H))
 endef
 
 # ------------------------------------------------------------------
@@ -179,11 +190,14 @@ savedefconfig:
 	@echo "CONFIG_MAX_ORDER        = $(CONFIG_MAX_ORDER)"         >> .config
 	@echo "CONFIG_KERNEL_STACK_SIZE = $(CONFIG_KERNEL_STACK_SIZE)" >> .config
 	@echo "CONFIG_KASLR            = $(CONFIG_KASLR)"             >> .config
+	@echo "CONFIG_KASLR_POLICY_ID  = $(CONFIG_KASLR_POLICY_ID)"   >> .config
+	@echo "CONFIG_KASLR_LOG_LEVEL  = $(CONFIG_KASLR_LOG_LEVEL)"   >> .config
 	@echo "CONFIG_STACK_CANARY     = $(CONFIG_STACK_CANARY)"      >> .config
 	@echo "CONFIG_DEBUG            = $(CONFIG_DEBUG)"              >> .config
 	@echo "CONFIG_DEBUG_LOCKS      = $(CONFIG_DEBUG_LOCKS)"        >> .config
 	@echo "CONFIG_SELFTEST         = $(CONFIG_SELFTEST)"           >> .config
 	@echo "CONFIG_KLOG             = $(CONFIG_KLOG)"               >> .config
+	@echo "CONFIG_KERNEL_COMPRESSED = $(CONFIG_KERNEL_COMPRESSED)" >> .config
 
 # 'make showconfig' — print effective configuration
 showconfig:
@@ -201,9 +215,12 @@ showconfig:
 	@echo "  MAX_ORDER         = $(CONFIG_MAX_ORDER)"
 	@echo "  KERNEL_STACK_SIZE = $(CONFIG_KERNEL_STACK_SIZE)"
 	@echo "  KASLR             = $(CONFIG_KASLR)"
+	@echo "  KASLR_POLICY_ID   = $(CONFIG_KASLR_POLICY_ID)"
+	@echo "  KASLR_LOG_LEVEL   = $(CONFIG_KASLR_LOG_LEVEL)"
 	@echo "  STACK_CANARY      = $(CONFIG_STACK_CANARY)"
 	@echo "  DEBUG             = $(CONFIG_DEBUG)"
 	@echo "  DEBUG_LOCKS       = $(CONFIG_DEBUG_LOCKS)"
 	@echo "  SELFTEST          = $(CONFIG_SELFTEST)"
 	@echo "  KLOG              = $(CONFIG_KLOG)"
+	@echo "  KERNEL_COMPRESSED = $(CONFIG_KERNEL_COMPRESSED)"
 	@echo "========================================"

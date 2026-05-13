@@ -20,6 +20,7 @@
     .text : AT(ADDR(.text) - PAGE_OFFSET) { \
         _stext = .;                         \
         *(.text .text.*)                    \
+        *(.fixup)                           \
         _etext = .;                         \
     } = 0
 
@@ -28,9 +29,22 @@
     .rodata : AT(ADDR(.rodata) - PAGE_OFFSET) {     \
         _srodata = .;                               \
         *(.rodata .rodata.*)                        \
+        . = ALIGN(8);                               \
+        __extable_start = .;                        \
+        KEEP(*(.extable))                           \
+        __extable_end = .;                          \
         INIT_ARRAY                                  \
         DRIVER_ARRAY                                \
         _erodata = .;                               \
+    }
+
+/* ===== Relocation Table (optional, stays in file image) ===== */
+#define RELOC_SECTION                               \
+    .reloc : AT(ADDR(.reloc) - PAGE_OFFSET) {       \
+        . = ALIGN(8);                               \
+        __lume_reloc_start = .;                     \
+        KEEP(*(.lume.reloc .lume.reloc.*))          \
+        __lume_reloc_end = .;                       \
     }
 
 /* ===== C++ Global Constructor Table ===== */

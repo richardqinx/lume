@@ -25,13 +25,18 @@ inline constexpr uint64 PTE_U = 1ULL << 4;
 inline constexpr uint64 PTE_G = 1ULL << 5;
 inline constexpr uint64 PTE_A = 1ULL << 6;
 inline constexpr uint64 PTE_D = 1ULL << 7;
+inline constexpr uint64 PTE_COW = 1ULL << 8; /* Custom RSW bit for Copy-On-Write */
 
 uint64 create();
 void destroy(uint64 root_pa);
 int map(uint64 root_pa, uint64 va, uint64 pa, uint64 perm);
 int map_2mb(uint64 root_pa, uint64 va, uint64 pa, uint64 perm);
 void unmap(uint64 root_pa, uint64 va);
+int protect(uint64 root_pa, uint64 va, uint64 perm);
+int protect_range(uint64 root_pa, uint64 start, uint64 end, uint64 perm);
 bool lookup(uint64 root_pa, uint64 va, uint64* pa_out);
+bool is_cow(uint64 root_pa, uint64 va);
+int make_cow(uint64 root_pa, uint64 va);
 void activate(uint64 root_pa);
 
 /*

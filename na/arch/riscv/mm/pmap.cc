@@ -39,6 +39,7 @@ inline constexpr uint64 PTE_U = 1ULL << 4;
 inline constexpr uint64 PTE_G = 1ULL << 5;
 inline constexpr uint64 PTE_A = 1ULL << 6;
 inline constexpr uint64 PTE_D = 1ULL << 7;
+inline constexpr uint64 PTE_COW = 1ULL << 8;
 
 /* SV39: 3 levels, 9 bits per level, 12-bit page offset */
 inline constexpr int kLevels = 3;
@@ -81,11 +82,11 @@ static uint64 alloc_pt_page()
     if (memblock_is_active()) {
         pa = memblock_alloc(kPageSize, kPageSize);
     } else {
-        Frame *f = pmm_alloc_frame();
-        if (!f) {
+        Page *page = pmm_alloc_page();
+        if (!page) {
             return 0;
         }
-        pa = frame_to_pa(f).raw;
+        pa = page_to_pa(page).raw;
     }
     if (!pa) {
         return 0;
@@ -119,13 +120,13 @@ void destroy(uint64 root_pa)
                 if (!(l1[j] & (PTE_R | PTE_W | PTE_X))) {
                     /* L0 page table */
                     uint64 l0_pa = pte_to_pa(l1[j]);
-                    pmm_free_frame(pa_to_frame(phys_addr(l0_pa)));
+                    pmm_free_page(pa_to_page(phys_addr(l0_pa)));
                 }
             }
-            pmm_free_frame(pa_to_frame(phys_addr(l1_pa)));
+            pmm_free_page(pa_to_page(phys_addr(l1_pa)));
         }
     }
-    pmm_free_frame(pa_to_frame(phys_addr(root_pa)));
+    pmm_free_page(pa_to_page(phys_addr(root_pa)));
 }
 
 int map(uint64 root_pa, uint64 va, uint64 pa, uint64 perm)
@@ -189,6 +190,47 @@ void unmap(uint64 root_pa, uint64 va)
     table[vpn(va, 0)] = 0;
 }
 
+int protect(uint64 root_pa, uint64 va, uint64 perm)
+{
+    uint64 *table = pa_to_ptr(root_pa);
+    for (int level = 2; level >= 0; level--) {
+        uint64 idx = vpn(va, level);
+        uint64 pte = table[idx];
+        if (!(pte & PTE_V))
+            return -14; /* -EFAULT */
+        if (pte & (PTE_R | PTE_W | PTE_X)) {
+            uint64 pa = pte_to_pa(pte);
+            table[idx] = pa_to_pte(pa, perm | PTE_V);
+            return 0;
+        }
+        table = pa_to_ptr(pte_to_pa(pte));
+    }
+    return -14;
+}
+
+int protect_range(uint64 root_pa, uint64 start, uint64 end, uint64 perm)
+{
+    if (end <= start) {
+        return 0;
+    }
+
+    uint64 va = page_align_down(start);
+    uint64 va_end = page_align_up(end);
+
+    for (; va < va_end; va += kPageSize) {
+        int ret = protect(root_pa, va, perm);
+        if (ret == -14) {
+            continue; /* unmapped page: skip */
+        }
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    arch::mmu::flush_tlb_all();
+    return 0;
+}
+
 bool lookup(uint64 root_pa, uint64 va, uint64 *pa_out)
 {
     uint64 *table = pa_to_ptr(root_pa);
@@ -206,6 +248,42 @@ bool lookup(uint64 root_pa, uint64 va, uint64 *pa_out)
         table = pa_to_ptr(pte_to_pa(pte));
     }
     return false;
+}
+
+bool is_cow(uint64 root_pa, uint64 va)
+{
+    uint64 *table = pa_to_ptr(root_pa);
+    for (int level = 2; level >= 0; level--) {
+        uint64 idx = vpn(va, level);
+        uint64 pte = table[idx];
+        if (!(pte & PTE_V))
+            return false;
+        if (pte & (PTE_R | PTE_W | PTE_X)) {
+            return (pte & PTE_COW) != 0;
+        }
+        table = pa_to_ptr(pte_to_pa(pte));
+    }
+    return false;
+}
+
+int make_cow(uint64 root_pa, uint64 va)
+{
+    uint64 *table = pa_to_ptr(root_pa);
+    for (int level = 2; level >= 0; level--) {
+        uint64 idx = vpn(va, level);
+        uint64 pte = table[idx];
+        if (!(pte & PTE_V))
+            return -14; /* -EFAULT */
+        if (pte & (PTE_R | PTE_W | PTE_X)) {
+            /* Clear write bit, set COW bit */
+            pte &= ~PTE_W;
+            pte |= PTE_COW;
+            table[idx] = pte;
+            return 0;
+        }
+        table = pa_to_ptr(pte_to_pa(pte));
+    }
+    return -14;
 }
 
 void activate(uint64 root_pa)

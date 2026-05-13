@@ -86,6 +86,27 @@ static const char* klog_subsys_name(KlogSubsys subsys)
     return "?";
 }
 
+static const char* parse_kern_level(const char* fmt, KlogLevel* level)
+{
+    if (!fmt || !level) {
+        return fmt;
+    }
+
+    /* Linux-style "\001n" prefix (KERN_SOH) */
+    if (fmt[0] == '\001' && fmt[1] >= '0' && fmt[1] <= '7') {
+        *level = static_cast<KlogLevel>(fmt[1] - '0');
+        return fmt + 2;
+    }
+
+    /* Alternate "<n>" prefix */
+    if (fmt[0] == '<' && fmt[1] >= '0' && fmt[1] <= '7' && fmt[2] == '>') {
+        *level = static_cast<KlogLevel>(fmt[1] - '0');
+        return fmt + 3;
+    }
+
+    return fmt;
+}
+
 /* ========================================================================
  * Ring Buffer Operations
  * ======================================================================== */
@@ -318,6 +339,35 @@ static void klog_vex(KlogLevel level, KlogSubsys subsys,
             console_emit(line, line_len);
         }
     }
+}
+
+int vprintk(const char* fmt, __builtin_va_list va)
+{
+    KlogLevel level = KLOG_INFO;
+    const char* real_fmt = parse_kern_level(fmt, &level);
+
+    __builtin_va_list va_copy;
+    __builtin_va_copy(va_copy, va);
+
+    char tmp[KLOG_LINE_MAX + 1];
+    int len = vsnprintf_(tmp, KLOG_LINE_MAX, real_fmt, va_copy);
+    __builtin_va_end(va_copy);
+
+    klog_vex(level, KLOG_SUBSYS_GENERIC, real_fmt, va);
+
+    if (len < 0) {
+        return 0;
+    }
+    return len;
+}
+
+int printk(const char* fmt, ...)
+{
+    __builtin_va_list va;
+    __builtin_va_start(va, fmt);
+    int ret = vprintk(fmt, va);
+    __builtin_va_end(va);
+    return ret;
 }
 
 void klog_set_level(KlogLevel level)

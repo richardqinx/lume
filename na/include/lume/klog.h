@@ -108,6 +108,11 @@ void klog(KlogLevel level, const char* fmt, ...);
 __attribute__((format(printf, 3, 4)))
 void klog_ex(KlogLevel level, KlogSubsys subsys, const char* fmt, ...);
 
+/* Linux-style printk interface */
+__attribute__((format(printf, 1, 2)))
+int printk(const char* fmt, ...);
+int vprintk(const char* fmt, __builtin_va_list va);
+
 /* Set runtime log level filter. Messages above this level are
  * still stored in the ring buffer but not printed to console. */
 void klog_set_level(KlogLevel level);
@@ -159,6 +164,21 @@ void klog_stats(KlogStats* out);
 #else
 #define pr_debug(fmt, ...)  do {} while (0)
 #endif
+
+/* Linux kernel loglevel prefixes */
+#define KERN_SOH    "\001"
+#define KERN_EMERG  KERN_SOH "0"
+#define KERN_ALERT  KERN_SOH "1"
+#define KERN_CRIT   KERN_SOH "2"
+#define KERN_ERR    KERN_SOH "3"
+#define KERN_WARNING KERN_SOH "4"
+#define KERN_NOTICE KERN_SOH "5"
+#define KERN_INFO   KERN_SOH "6"
+#define KERN_DEBUG  KERN_SOH "7"
+
+/* Boot stage log (thin wrapper over printk) */
+#define BOOT_STAGE(n, desc) \
+    printk(KERN_INFO "STAGE%u %s\n", (unsigned)(n), (desc))
 
 extern "C" [[noreturn]] void kernel_panic(const char* msg, const char* detail = nullptr);
 

@@ -60,6 +60,14 @@
 #define CONFIG_DEFAULT_TIMESLICE (CONFIG_HZ / 10)
 #endif
 
+#ifndef CONFIG_KASLR_POLICY_ID
+#define CONFIG_KASLR_POLICY_ID  0   /* Default: basic KASLR policy */
+#endif
+
+#ifndef CONFIG_KASLR_LOG_LEVEL
+#define CONFIG_KASLR_LOG_LEVEL  1   /* 0=off, 1=minimal, 2=debug */
+#endif
+
 /* ================================================================
  * Legacy compatibility aliases (shared with assembly)
  * ================================================================ */
@@ -77,5 +85,9 @@ inline constexpr int kMaxCpus = CONFIG_NR_CPUS;
 
 /* Virtual memory page size (4KB, matching SV39 base page). */
 inline constexpr uint64 kPageSize = CONFIG_PAGE_SIZE;
+
+/* KASLR policy ID and logging level (build-time configurable) */
+inline constexpr uint32 kKaslrPolicyId = CONFIG_KASLR_POLICY_ID;
+inline constexpr int kKaslrLogLevel = CONFIG_KASLR_LOG_LEVEL;
 
 #endif /* __ASSEMBLER__ */

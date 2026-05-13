@@ -19,12 +19,20 @@ void selftest_vmm();
 void selftest_fdt();
 void selftest_vma();
 void selftest_atomic();
+void selftest_trap();
+void selftest_sched();
+void selftest_klog();
+void selftest_random();
+void selftest_reloc();
+void selftest_waitqueue();
+void selftest_uaccess();
+void selftest_sys_mm();
 
 void selftest_run_all()
 {
-    early_puts("\n========================================\n");
-    early_puts("  Boot Self-Test Suite\n");
-    early_puts("========================================\n");
+    kprintf("\n========================================\n");
+    kprintf("  Boot Self-Test Suite\n");
+    kprintf("========================================\n");
 
     selftest_spinlock();
     selftest_pmm();
@@ -34,8 +42,16 @@ void selftest_run_all()
     selftest_vma();
     selftest_atomic();
     selftest_fdt();
+    selftest_trap();
+    selftest_sched();
+    selftest_klog();
+    selftest_random();
+    selftest_reloc();
+    selftest_waitqueue();
+    selftest_uaccess();
+    selftest_sys_mm();
 
-    early_puts("========================================\n");
-    early_puts("  All self-tests PASSED\n");
-    early_puts("========================================\n\n");
+    kprintf("========================================\n");
+    kprintf("  All self-tests PASSED\n");
+    kprintf("========================================\n\n");
 }

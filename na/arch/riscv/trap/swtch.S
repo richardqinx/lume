@@ -77,3 +77,20 @@ kthread_entry_trampoline:
     /* kthread_entry should never return, but if it does: */
     wfi
     j kthread_entry_trampoline + 12  /* loop on wfi */
+
+/* ========================================================================
+ * ret_from_fork
+ *
+ * Trampoline for newly forked processes.
+ * Context is set up by fork() so that s0 contains the TrapFrame pointer.
+ *
+ * Calls the MI-layer C++ function:
+ *   void fork_child_entry(TrapFrame* tf);
+ * ======================================================================== */
+    .globl ret_from_fork
+    .align 2
+ret_from_fork:
+    mv a0, s0           /* a0 = TrapFrame pointer */
+    call fork_child_entry /* does not return, eventually calls userret */
+    wfi
+    j ret_from_fork + 8

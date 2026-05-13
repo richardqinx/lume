@@ -26,7 +26,7 @@
 #include <lume/syscall.h>
 #include <lume/task.h>
 #include <lume/vmm.h>
-#include <lume/signal.h>
+#include <lume/signal_nr.h>
 #include <arch/trapframe.h>  /* TrapFrame: cross-layer data contract */
 
 /* ========================================================================

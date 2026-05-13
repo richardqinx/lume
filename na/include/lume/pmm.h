@@ -6,10 +6,10 @@
 /*
  * Physical Memory Manager (PMM) — Buddy System + Per-CPU Cache
  *
- * Manages all physical page frames discovered via FDT.  Built on a
+ * Manages all physical pages discovered via FDT. Built on a
  * power-of-two buddy allocator for multi-page requests, with a
  * Per-CPU single-page cache (PCP) to reduce lock contention on the
- * hot single-frame alloc/free path.
+ * hot single-page alloc/free path.
  *
  * Concurrency model:
  *   - PCP operations run with interrupts disabled (same-CPU safety).
@@ -20,7 +20,7 @@
  */
 
 #include <lume/types.h>
-#include <lume/frame.h>
+#include <lume/page.h>
 #include <lume/addr_types.h>
 #include <lume/config.h>
 
@@ -37,43 +37,43 @@ extern uint32 g_pcp_batch_size;
 
 /*
  * Initialize the PMM.  Called by BSP after vmm_init() + memblock.
- * frame_map is already mapped at VMEMMAP VA by vmm_init.
+ * page_map is already mapped at VMEMMAP VA by vmm_init.
  * Populates buddy lists from memblock's free regions, then retires memblock.
  * Panics on failure.
  */
 void pmm_init();
 
-/* --- Single-frame fast path (uses PCP) --- */
+/* --- Single-page fast path (uses PCP) --- */
 
-// Allocate one 4KB frame.  Returns nullptr on OOM.
-Frame* pmm_alloc_frame();
+// Allocate one 4KB page. Returns nullptr on OOM.
+Page* pmm_alloc_page();
 
-// Free one 4KB frame.
-void pmm_free_frame(Frame* frame);
+// Free one 4KB page.
+void pmm_free_page(Page* page);
 
-/* --- Multi-frame slow path (direct buddy) --- */
+/* --- Multi-page slow path (direct buddy) --- */
 
-// Allocate 2^order contiguous frames.  Returns nullptr on OOM.
-Frame* pmm_alloc_frames(uint8 order);
+// Allocate 2^order contiguous pages. Returns nullptr on OOM.
+Page* pmm_alloc_pages(uint8 order);
 
-// Free 2^order contiguous frames.
-void pmm_free_frames(Frame* frame, uint8 order);
+// Free 2^order contiguous pages.
+void pmm_free_pages(Page* page, uint8 order);
 
 /* --- Reference counting (atomic, lock-free) --- */
 
-void frame_incref(Frame* frame);
-void frame_decref(Frame* frame);
+void page_incref(Page* page);
+void page_decref(Page* page);
 
 /* --- Address conversion --- */
 
-// Convert a Frame* to its physical address.
-PhysAddr frame_to_pa(const Frame* frame);
+// Convert a Page* to its physical address.
+PhysAddr page_to_pa(const Page* page);
 
-// Convert a physical address to its Frame*.
-Frame* pa_to_frame(PhysAddr pa);
+// Convert a physical address to its Page*.
+Page* pa_to_page(PhysAddr pa);
 
-// Convert a Frame* to a kernel virtual address.
-VirtAddr frame_to_va(const Frame* frame);
+// Convert a Page* to a kernel virtual address.
+VirtAddr page_to_va(const Page* page);
 
 // Query PMM memory range (for VMM kernel mapping)
 PhysAddr pmm_get_mem_base();

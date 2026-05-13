@@ -1,7 +1,11 @@
 # lib/module.mk
-SRCS_CC += lib/panic.cc
 SRCS_CC += lib/cxx_abi.cc
 SRCS_CC += lib/rbtree.cc
+SRCS_CC += lib/kprintf.cc
+SRCS_CC += lib/klog.cc
+SRCS_CC += lib/random.cc
+SRCS_CC += lib/decompress_lz4.cc
+SRCS_C  += lib/printf.c
 
 # ============================================================
 # musl string library (cross-platform with arch asm overrides)

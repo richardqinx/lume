@@ -69,9 +69,16 @@ SECTIONS {
 
     . = ALIGN(4096);
 
+    RELOC_SECTION
+
+    . = ALIGN(4096);
+
     DATA_SECTION
 
     . = ALIGN(4096);
+
+    /* End of file-backed image (BSS follows as NOBITS) */
+    __lume_image_end = .;
 
     BSS_SECTION
 

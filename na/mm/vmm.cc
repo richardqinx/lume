@@ -8,9 +8,9 @@
  * the early_pgdir identity mapping from entry.S.
  *
  * With memblock integration, the initialization order is:
- *   memblock_init → vmm_init (allocates frame_map from memblock,
+ *   memblock_init → vmm_init (allocates page_map from memblock,
  *   maps vmemmap, activates page table) → pmm_init (buddy system
- *   starts with frame_map already at vmemmap VA — no relocation).
+ *   starts with page_map already at vmemmap VA — no relocation).
  *
  * Reference: docs/specs/vmm.md
  */
@@ -21,7 +21,7 @@
 #include <lume/addr.h>
 #include <lume/console.h>
 #include <lume/fdt.h>
-#include <lume/frame.h>
+#include <lume/page.h>
 #include <lume/klog.h>
 #include <lume/kprintf.h>
 #include <lume/memblock.h>
@@ -39,14 +39,14 @@ extern "C" char _kernel_end[];
 /* Global kernel page table root PA */
 static uint64 g_kernel_pgtbl = 0;
 
-/* VMM exports for PMM: frame_map location after vmemmap mapping. */
-static uint64 g_vmemmap_frame_map_pa = 0;
-static uint64 g_vmemmap_frame_map_size = 0;
-static uint64 g_vmemmap_num_frames = 0;
+/* VMM exports for PMM: page_map location after vmemmap mapping. */
+static uint64 g_vmemmap_page_map_pa = 0;
+static uint64 g_vmemmap_page_map_size = 0;
+static uint64 g_vmemmap_num_pages = 0;
 
-uint64 vmm_get_frame_map_pa() { return g_vmemmap_frame_map_pa; }
-uint64 vmm_get_frame_map_size() { return g_vmemmap_frame_map_size; }
-uint64 vmm_get_num_frames() { return g_vmemmap_num_frames; }
+uint64 vmm_get_page_map_pa() { return g_vmemmap_page_map_pa; }
+uint64 vmm_get_page_map_size() { return g_vmemmap_page_map_size; }
+uint64 vmm_get_num_pages() { return g_vmemmap_num_pages; }
 
 /* Convert a linker symbol to PA (kernel is executing in higher-half VA). */
 static inline uint64 sym_to_pa(const void *sym) {
@@ -149,32 +149,32 @@ void vmm_init() {
     map_range(root, after_kernel, mem_end, pmap::PTE_R | pmap::PTE_W);
   }
 
-  /* 7. Allocate frame_map from memblock (top of RAM) and map at VMEMMAP.
+  /* 7. Allocate page_map from memblock (top of RAM) and map at VMEMMAP.
    *
    * Since memblock is active (PMM not yet initialized), pmap::map
-   * allocates page table pages from memblock too.  frame_map starts
+   * allocates page table pages from memblock too. page_map starts
    * life at the vmemmap VA — no relocation ever needed.
    */
-  uint64 num_frames = mem_size / kPageSize;
-  uint64 frame_map_bytes = num_frames * sizeof(Frame);
-  uint64 frame_map_span = page_align_up(frame_map_bytes);
-  uint64 frame_map_pa = memblock_alloc_top(frame_map_span, kPageSize);
+  uint64 num_pages = mem_size / kPageSize;
+  uint64 page_map_bytes = num_pages * sizeof(Page);
+  uint64 page_map_span = page_align_up(page_map_bytes);
+  uint64 page_map_pa = memblock_alloc_top(page_map_span, kPageSize);
 
-  if (!frame_map_pa) {
-    kernel_panic("vmm_init: memblock failed to allocate frame_map");
+  if (!page_map_pa) {
+    kernel_panic("vmm_init: memblock failed to allocate page_map");
   }
 
-  kprintf("[vmm] vmemmap: %llu frames, %llu KB at PA 0x%llx\n", num_frames,
-          frame_map_span / 1024, frame_map_pa);
+  kprintf("[vmm] vmemmap: %llu pages, %llu KB at PA 0x%llx\n", num_pages,
+          page_map_span / 1024, page_map_pa);
 
-  /* Map frame_map at g_vmemmap_base (randomised by KASLR), using 2MB pages where possible */
-  map_range_at_huge(root, arch::g_vmemmap_base, frame_map_pa,
-                    frame_map_pa + frame_map_span, pmap::PTE_R | pmap::PTE_W);
+  /* Map page_map at vmemmap_base from KaslrLayout (randomised by KASLR), using 2MB pages where possible */
+  map_range_at_huge(root, arch::kaslr_layout_get().vmemmap_base, page_map_pa,
+                    page_map_pa + page_map_span, pmap::PTE_R | pmap::PTE_W);
 
   /* Export for pmm_init() */
-  g_vmemmap_frame_map_pa = frame_map_pa;
-  g_vmemmap_frame_map_size = frame_map_bytes;
-  g_vmemmap_num_frames = num_frames;
+  g_vmemmap_page_map_pa = page_map_pa;
+  g_vmemmap_page_map_size = page_map_bytes;
+  g_vmemmap_num_pages = num_pages;
 
   /* 8. Pre-map console MMIO before page table switch */
   g_kernel_pgtbl = root;
@@ -186,7 +186,7 @@ void vmm_init() {
   /* Console MMIO access must now use runtime (KASLR) direct-map base. */
   console_use_runtime_mapping();
 
-  kprintf("[vmm] vmm_init complete (vmemmap at 0x%llx)\n", arch::g_vmemmap_base);
+  kprintf("[vmm] vmm_init complete (vmemmap at 0x%llx)\n", arch::kaslr_layout_get().vmemmap_base);
 }
 
 void vmm_init_ap() {

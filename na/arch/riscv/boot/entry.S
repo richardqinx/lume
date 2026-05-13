@@ -36,6 +36,14 @@
 /* SATP mode field for SV39 */
 #define SATP_SV39  (8UL << 60)
 
+/* LumeOS compressed image header constants */
+#define LUME_COMP_NONE 0
+#define LUME_HDR_SIZE 80
+#define LUME_HDR_MAGIC 0x4C554D45434F4D50 /* "LUMECOMP" */
+#define LUME_HDR_OFF 64
+#define LUME_HDR_FLAGS_OFF 14
+#define LUME_HDR_FLAG_STAGE3_DONE 0x1
+
 /* ========================================================================
  * Section: .head.text — RISC-V Linux Boot Protocol Image Header
  * Must be at byte 0 of the kernel binary.
@@ -66,6 +74,25 @@ _start:
     /* res3 (u32, offset 60): reserved for PE/COFF */
     .word   0
 
+    /* LumeOS compressed kernel header (80 bytes) */
+    .align  3
+    .globl __lume_image_header
+__lume_image_header:
+    .dword  LUME_HDR_MAGIC          /* magic */
+    .word   1                       /* version */
+    .half   LUME_HDR_SIZE           /* header_size */
+    .half   0                       /* flags */
+    .word   LUME_COMP_NONE          /* compression */
+    .word   0                       /* reserved0 */
+    .dword  __lume_image_end - _start  /* uncompressed_size */
+    .dword  0                       /* compressed_size */
+    .dword  0                       /* load_phys_base (0 = auto) */
+    .dword  __lume_reloc_start - _start /* reloc_offset */
+    .dword  __lume_reloc_end - __lume_reloc_start /* reloc_size */
+    .dword  _ebss - _start            /* payload_offset (when compressed) */
+    .word   0                       /* header_crc32 */
+    .word   0                       /* payload_crc32 */
+
 /* ========================================================================
  * real_start: Actual boot logic begins here (all CPUs land here)
  * ======================================================================== */
@@ -91,9 +118,9 @@ real_start:
     mul     t1, t1, t2          /* t1 = (cpu_id + 1) * BOOT_STACK_SIZE */
     add     sp, t0, t1
 
-    /* ---- Step 4: Store CPU ID in tp for arch::cpu::id() ---- */
-    mv      tp, a0
-
+    /* ---- Step 4: Store boot args (cpu_id and fdt_paddr) ---- */
+    mv      tp, a0              /* tp = cpu_id */
+    mv      s0, a1              /* s0 = fdt_paddr (preserved across all C++ calls) */
     /* ---- Step 5: BSP / AP divergence ---- */
     /* CPU 0 is the BSP; all others spin-wait */
     bnez    a0, .Lap_wait
@@ -111,6 +138,7 @@ real_start:
     addi    t0, t0, 8
     j       .Lbss_loop
 .Lbss_done:
+
 
     /* ---- 5.2: Build early page table (1GB superpages) ---- */
     /*
@@ -155,6 +183,7 @@ real_start:
     add     t3, t0, t3
     sd      t1, 0(t3)
 
+
     /* ---- 5.3: Memory fence ---- */
     fence   rw, rw
 
@@ -178,6 +207,8 @@ real_start:
  * All CPUs: Enable MMU and jump to higher-half virtual addresses
  * =================================================================== */
 .Lenable_mmu:
+
+
     /* ---- 6.1: Write satp = SV39 mode | (early_pgdir >> 12) ---- */
     /* NOTE: `la` at this point is PC-relative. Since we are still executing
      * at physical addresses, it yields the PHYSICAL address directly.
@@ -216,17 +247,17 @@ real_start:
     la      gp, __global_pointer$
     .option pop
 
-    /* ---- Step 7: Save fdt_paddr, BSP calls early_cpp_init ---- */
-    /* a1 (fdt_paddr) is caller-saved and may be clobbered by function calls.
-     * Save it in s0 (callee-saved) so it survives early_cpp_init. */
-    mv      s0, a1              /* s0 = fdt_paddr (preserved across calls) */
+    /* Mark MMU enabled for early console mapping logic */
+    call    console_set_mmu_enabled
 
+    /* ---- Step 7: BSP calls early_cpp_init ---- */
     bnez    tp, .Lskip_cpp_init
 
     /* BSP only: invoke C++ global constructors */
     call    early_cpp_init
 
 .Lskip_cpp_init:
+
     /* All CPUs: enter kernel_main(cpu_id, fdt_paddr) */
     mv      a0, tp              /* a0 = cpu_id (from tp) */
     mv      a1, s0              /* a1 = fdt_paddr (from s0) */

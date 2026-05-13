@@ -106,14 +106,14 @@ void memblock_init(uint64 fdt_paddr)
 
     /* 2. Reserve firmware region [mem_base, kernel_start).
      *    OpenSBI occupies the first 2MB of RAM on RISC-V virt. */
-    uint64 ks_pa = va_to_pa(virt_addr(
+    uint64 ks_pa = boot_va_to_pa(virt_addr(
         reinterpret_cast<uint64>(_stext))).raw;
     if (ks_pa > mem_base) {
         memblock_reserve(mem_base, ks_pa - mem_base);
     }
 
     /* 3. Reserve kernel image [_stext, _kernel_end) */
-    uint64 ke_pa = va_to_pa(virt_addr(
+    uint64 ke_pa = boot_va_to_pa(virt_addr(
         reinterpret_cast<uint64>(_kernel_end))).raw;
     memblock_reserve(ks_pa, ke_pa - ks_pa);
 

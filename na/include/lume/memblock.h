@@ -11,12 +11,12 @@
  *
  * Lifetime:
  *   1. memblock_init()       — discovers RAM via FDT, reserves kernel image
- *   2. vmm_init()            — uses memblock_alloc for page table pages & frame_map
+ *   2. vmm_init()            — uses memblock_alloc for page table pages & page_map
  *   3. pmm_init()            — absorbs remaining free regions into buddy
  *   4. memblock_retire()     — marks memblock inactive; all alloc via PMM
  *
  * This eliminates the need for post-init pointer relocation when
- * rebinding frame_map to a VMEMMAP virtual address.
+ * rebinding page_map to a VMEMMAP virtual address.
  */
 
 #include <lume/types.h>
@@ -30,7 +30,7 @@ void memblock_init(uint64 fdt_paddr);
 void memblock_reserve(uint64 base, uint64 size);
 
 /* Allocate `size` bytes aligned to `align` from top of free memory.
- * Returns PA, or 0 on failure.  Used for frame_map. */
+ * Returns PA, or 0 on failure. Used for page_map. */
 uint64 memblock_alloc_top(uint64 size, uint64 align);
 
 /* Allocate `size` bytes aligned to `align` from bottom of free memory.

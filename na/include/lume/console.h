@@ -7,6 +7,7 @@
 
 extern "C" void early_putc(char c);
 extern "C" void early_puts(const char* s);
+extern "C" void console_set_mmu_enabled();
 
 /* Early UART discovery via raw FDT parsing. */
 void console_early_init(uint64 fdt_paddr);

@@ -22,10 +22,15 @@ BUILD   := build
 include scripts/Kconfig.mk
 
 ARCH    ?= $(CONFIG_ARCH)
-TARGET  := $(BUILD)/kernel.elf
-IMAGE   := $(BUILD)/kernel.bin
+VMLINUX_PRE := $(BUILD)/kernel.pre.elf
+VMLINUX := $(BUILD)/kernel.elf
+VMLINUX_RAW := $(BUILD)/vmlume.raw.bin
+IMAGE   := $(BUILD)/vmlume.bin
+RELOC_BIN := $(BUILD)/reloc.bin
+RELOC_OBJ := $(BUILD)/reloc.o
 LDS_SRC := arch/$(ARCH)/kernel/lumeos.lds.S
 LINKER_SCRIPT := $(BUILD)/lumeos.lds
+PYTHON ?= python3
 
 # ============================================================
 # Toolchain Detection
@@ -54,6 +59,16 @@ CXX     := $(TOOLCHAIN_PREFIX)g++
 LD      := $(TOOLCHAIN_PREFIX)ld
 OBJCOPY := $(TOOLCHAIN_PREFIX)objcopy
 OBJDUMP := $(TOOLCHAIN_PREFIX)objdump
+# Objcopy output formats for binary-to-ELF relocation blob
+OBJCOPY_ELF_riscv := elf64-littleriscv
+OBJCOPY_ELF_aarch64 := elf64-littleaarch64
+OBJCOPY_ELF_x86_64 := elf64-x86-64
+OBJCOPY_ELF := $(OBJCOPY_ELF_$(ARCH))
+
+OBJCOPY_BINARCH_riscv := riscv
+OBJCOPY_BINARCH_aarch64 := aarch64
+OBJCOPY_BINARCH_x86_64 := i386:x86-64
+OBJCOPY_BINARCH := $(OBJCOPY_BINARCH_$(ARCH))
 
 # Common flags (base, before module includes)
 WARNINGS := -Wall -Wextra -Wno-unused-parameter
@@ -97,7 +112,7 @@ CXXFLAGS := $(CFLAGS) \
 
 ASFLAGS  := $(CFLAGS)
 
-LDFLAGS  := -nostdlib -static
+LDFLAGS  := -nostdlib -static --emit-relocs
 
 # ============================================================
 # Object File Computation
@@ -130,16 +145,43 @@ $(LINKER_SCRIPT): $(LDS_SRC) include/lume/lumeos.lds.h
 	@$(CC) -E -P -x c $(INCLUDES) $< -o $@
 
 # Link kernel ELF
-$(TARGET): $(OBJS) $(LINKER_SCRIPT)
+$(VMLINUX_PRE): $(OBJS) $(LINKER_SCRIPT)
 	@echo "  LD      $@"
 	@mkdir -p $(dir $@)
 	@$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
 	@$(TOOLCHAIN_PREFIX)size $@
 
+$(RELOC_BIN): $(VMLINUX_PRE) scripts/gen_reloc.py
+	@echo "  RELOC   $@"
+	@mkdir -p $(dir $@)
+	@$(PYTHON) scripts/gen_reloc.py --elf $< --out $@
+
+$(RELOC_OBJ): $(RELOC_BIN)
+	@echo "  OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_ELF) -B $(OBJCOPY_BINARCH) \
+		--rename-section .data=.lume.reloc,alloc,load,readonly,data,contents \
+		$< $@
+
+$(VMLINUX): $(OBJS) $(RELOC_OBJ) $(LINKER_SCRIPT)
+	@echo "  LD      $@"
+	@mkdir -p $(dir $@)
+	@$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS) $(RELOC_OBJ)
+	@$(TOOLCHAIN_PREFIX)size $@
+
 # Generate flat binary for QEMU loading
-$(IMAGE): $(TARGET)
+$(VMLINUX_RAW): $(VMLINUX)
 	@echo "  OBJCOPY $@"
 	@$(OBJCOPY) -O binary $< $@
+
+ifeq ($(CONFIG_KERNEL_COMPRESSED),y)
+$(IMAGE): $(VMLINUX_RAW) $(VMLINUX) scripts/pack_image.py
+	@echo "  PACK    $@"
+	@$(PYTHON) scripts/pack_image.py --elf $(VMLINUX) --input $< --output $@ --compress lz4
+else
+$(IMAGE): $(VMLINUX_RAW) $(VMLINUX) scripts/pack_image.py
+	@echo "  PACK    $@"
+	@$(PYTHON) scripts/pack_image.py --elf $(VMLINUX) --input $< --output $@ --compress none
+endif
 
 # Compile C++ sources
 $(BUILD)/%.o: %.cc
@@ -199,10 +241,10 @@ debug: $(IMAGE)
 clean:
 	rm -rf $(BUILD)
 
-disasm: $(TARGET)
+disasm: $(VMLINUX)
 	@echo "  OBJDUMP $<"
-	@$(OBJDUMP) -d -S $(TARGET) > $(TARGET).asm
-	@echo "  Written to $(TARGET).asm"
+	@$(OBJDUMP) -d -S $(VMLINUX) > $(VMLINUX).asm
+	@echo "  Written to $(VMLINUX).asm"
 
 fmt:
 	@echo "  FMT     Formatting source files..."

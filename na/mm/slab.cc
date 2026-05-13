@@ -6,14 +6,14 @@
  *
  * Key design points:
  *   - Free object list is embedded in the objects themselves (first 8 bytes).
- *   - Per-page metadata lives in Frame.slab (cache, obj_count, freelist).
+ *   - Per-page metadata lives in Page.slab (cache, obj_count, freelist).
  *   - Per-CPU "active page" avoids lock contention on the fast path.
  *   - partial_ list protected by per-KmemCache Spinlock.
  *   - PMM calls happen outside the lock to avoid lock ordering issues.
  *
  * Address note: the kernel may be running at physical addresses via
  * identity mapping (before vmm_init).  We handle PA/VA carefully:
- * PMM gives us Frame*, frame_to_pa() gives PA, and we access page
+ * PMM gives us Page*, page_to_pa() gives PA, and we access page
  * contents via pa_to_va() (higher-half VA, always mapped).
  *
  * Reference: docs/specs/slab.md
@@ -31,12 +31,12 @@
 /* ------------------------------------------------------------------ */
 
 /*
- * Convert a Frame* to the usable virtual address of the page's contents.
+ * Convert a Page* to the usable virtual address of the page's contents.
  * Uses the higher-half mapping which is always active.
  */
-static inline void* frame_to_page_va(Frame* f)
+static inline void* page_to_data_va(Page* page)
 {
-    return reinterpret_cast<void*>(pa_to_va(frame_to_pa(f)).raw);
+    return reinterpret_cast<void*>(page_to_va(page).raw);
 }
 
 /* Round up x to the next multiple of align (align must be power of 2) */
@@ -73,18 +73,18 @@ void KmemCache::init(const char* name, uint32 obj_size, uint32 obj_align)
 /*  KmemCache::new_slab — allocate and format a fresh slab page       */
 /* ------------------------------------------------------------------ */
 
-Frame* KmemCache::new_slab()
+Page* KmemCache::new_slab()
 {
-    Frame* f = pmm_alloc_frame();
-    if (!f)
+    Page* page = pmm_alloc_page();
+    if (!page)
         return nullptr;
 
-    f->state = FrameState::Slab;
-    f->slab.cache = this;
-    f->slab.obj_count = 0;
+    page->state = PageState::Slab;
+    page->slab.cache = this;
+    page->slab.obj_count = 0;
 
     /* Build the embedded free list across all object slots */
-    uint8* base = static_cast<uint8*>(frame_to_page_va(f));
+    uint8* base = static_cast<uint8*>(page_to_data_va(page));
     void* head = nullptr;
 
     /* Chain objects from last to first so freelist order = low addr first */
@@ -93,38 +93,38 @@ Frame* KmemCache::new_slab()
         *reinterpret_cast<void**>(obj) = head;
         head = obj;
     }
-    f->slab.freelist = head;
+    page->slab.freelist = head;
 
-    return f;
+    return page;
 }
 
 /* ------------------------------------------------------------------ */
 /*  Partial list management (lock must be held)                       */
 /* ------------------------------------------------------------------ */
 
-Frame* KmemCache::get_partial()
+Page* KmemCache::get_partial()
 {
     /*
      * Phase 1 simplification: no partial list tracking.
      * The slow path always allocates a fresh page from PMM.
-     * Full pages stay alive (Frame.slab.cache is valid for kfree).
+    * Full pages stay alive (Page.slab.cache is valid for kfree).
      * Empty pages are returned to PMM immediately.
      *
-     * TODO: add list_node to Frame.slab and implement partial tracking
+    * TODO: add list_node to Page.slab and implement partial tracking
      * to avoid wasting partially-filled pages.
      */
     (void)partial_;
     return nullptr;
 }
 
-void KmemCache::put_partial(Frame* f)
+void KmemCache::put_partial(Page* page)
 {
-    (void)f;
+    (void)page;
 }
 
-void KmemCache::remove_partial(Frame* f)
+void KmemCache::remove_partial(Page* page)
 {
-    (void)f;
+    (void)page;
 }
 
 /* ------------------------------------------------------------------ */
@@ -137,7 +137,7 @@ void* KmemCache::alloc()
     arch::cpu::intr_off();
 
     uint64 cpu = arch::cpu::id();
-    Frame* active = cpu_slab_[cpu].active;
+    Page* active = cpu_slab_[cpu].active;
 
     /* Fast path: pop from active page's freelist */
     if (active && active->slab.freelist) {
@@ -160,7 +160,7 @@ void* KmemCache::alloc()
 
     /* Try to get a partial page or allocate a fresh one.
      * PMM call happens without any lock held. */
-    Frame* new_page = new_slab();
+    Page* new_page = new_slab();
     if (!new_page)
         return nullptr;
 
@@ -189,38 +189,38 @@ void KmemCache::free(void* obj)
     if (!obj)
         return;
 
-    /* Find the Frame for this object's page */
+    /* Find the Page for this object's page */
     uint64 obj_addr = reinterpret_cast<uint64>(obj);
 
     /* Convert VA to PA. Like pmm.cc, handle both PA and VA cases. */
     uint64 obj_pa = va_to_pa(virt_addr(obj_addr)).raw;
     uint64 page_pa = obj_pa & ~(kPageSize - 1);
-    Frame* f = pa_to_frame(phys_addr(page_pa));
+    Page* page = pa_to_page(phys_addr(page_pa));
 
-    if (f->state != FrameState::Slab || f->slab.cache != this)
+    if (page->state != PageState::Slab || page->slab.cache != this)
         kernel_panic("slab free: object does not belong to this cache");
 
     bool was_on = arch::cpu::intr_enabled();
     arch::cpu::intr_off();
 
     /* Push object back onto the page's freelist */
-    *reinterpret_cast<void**>(obj) = f->slab.freelist;
-    f->slab.freelist = obj;
-    f->slab.obj_count--;
+    *reinterpret_cast<void**>(obj) = page->slab.freelist;
+    page->slab.freelist = obj;
+    page->slab.obj_count--;
 
     /* If page is now completely empty, return it to PMM */
-    if (f->slab.obj_count == 0) {
+    if (page->slab.obj_count == 0) {
         /* If this page is our active, clear it */
         uint64 cpu = arch::cpu::id();
-        if (cpu_slab_[cpu].active == f)
+        if (cpu_slab_[cpu].active == page)
             cpu_slab_[cpu].active = nullptr;
 
         if (was_on) arch::cpu::intr_on();
 
         /* Return page to PMM */
-        f->slab.cache = nullptr;
-        f->slab.freelist = nullptr;
-        pmm_free_frame(f);
+        page->slab.cache = nullptr;
+        page->slab.freelist = nullptr;
+        pmm_free_page(page);
         return;
     }
 
@@ -252,10 +252,10 @@ void* kmalloc(uint32 size)
         uint64 needed = (size + kPageSize - 1) / kPageSize;
         while ((1ULL << order) < needed)
             order++;
-        Frame* f = pmm_alloc_frames(order);
-        if (!f)
+        Page* page = pmm_alloc_pages(order);
+        if (!page)
             return nullptr;
-        return reinterpret_cast<void*>(pa_to_va(frame_to_pa(f)).raw);
+        return reinterpret_cast<void*>(pa_to_va(page_to_pa(page)).raw);
     }
 
     KmemCache* cache = find_cache(size);
@@ -272,18 +272,18 @@ void kfree(void* ptr)
     uint64 addr = reinterpret_cast<uint64>(ptr);
     uint64 pa = va_to_pa(virt_addr(addr)).raw;
     uint64 page_pa = pa & ~(kPageSize - 1);
-    Frame* f = pa_to_frame(phys_addr(page_pa));
+    Page* page = pa_to_page(phys_addr(page_pa));
 
-    if (f->state == FrameState::Slab) {
-        KmemCache* cache = f->slab.cache;
+    if (page->state == PageState::Slab) {
+        KmemCache* cache = page->slab.cache;
         if (!cache)
-            kernel_panic("kfree: slab frame has null cache");
+            kernel_panic("kfree: slab page has null cache");
         cache->free(ptr);
-    } else if (f->state == FrameState::Allocated) {
+    } else if (page->state == PageState::Allocated) {
         /* Large allocation — return directly to PMM */
-        pmm_free_frames(f, f->order);
+        pmm_free_pages(page, page->order);
     } else {
-        kernel_panic("kfree: invalid frame state");
+        kernel_panic("kfree: invalid page state");
     }
 }
 

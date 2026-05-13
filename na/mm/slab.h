@@ -7,7 +7,7 @@
  * SLUB Allocator — module-private header
  *
  * SLUB = Simple List of Unfull Blocks.
- * Metadata lives in Frame descriptors (no per-page Slab header).
+ * Metadata lives in Page descriptors (no per-page Slab header).
  * Free object list is embedded inside the objects themselves.
  * Per-CPU "active page" eliminates lock contention on the fast path.
  *
@@ -16,7 +16,7 @@
 
 #include <lume/types.h>
 #include <lume/config.h>
-#include <lume/frame.h>
+#include <lume/page.h>
 #include <lume/list.h>
 #include <kernel/sync/spinlock.h>
 
@@ -28,7 +28,7 @@ inline constexpr uint32 kSizeClasses[kNumSizeClasses] = {
 
 /* Per-CPU active slab page pointer */
 struct PerCpuSlab {
-    Frame* active;  // Currently used slab page (nullptr if none)
+    Page* active;  // Currently used slab page (nullptr if none)
 };
 
 /*
@@ -57,16 +57,16 @@ public:
 
 private:
     // Get a partially-filled page from the partial list (lock must be held)
-    Frame* get_partial();
+    Page* get_partial();
 
     // Put a page onto the partial list (lock must be held)
-    void put_partial(Frame* f);
+    void put_partial(Page* page);
 
     // Remove a page from the partial list (lock must be held)
-    void remove_partial(Frame* f);
+    void remove_partial(Page* page);
 
     // Allocate a new page from PMM and format it as a slab
-    Frame* new_slab();
+    Page* new_slab();
 
     Spinlock lock_;                  // Protects partial_ only
     list_node partial_;              // Partially-filled slab pages

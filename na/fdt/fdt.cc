@@ -247,9 +247,16 @@ void FdtManager::early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr,
   if (!uart_addr || !uart_size)
     return;
 
+  auto set_default_uart = [uart_addr, uart_size]() {
+    *uart_addr = 0x10000000ULL;
+    *uart_size = 0x100;
+  };
+
   const fdt_header *hdr = reinterpret_cast<const fdt_header *>(fdt_paddr);
-  if (bswap32(hdr->magic) != FDT_MAGIC)
+  if (bswap32(hdr->magic) != FDT_MAGIC) {
+    set_default_uart();
     return;
+  }
 
   const uint8 *dt_struct =
       reinterpret_cast<const uint8 *>(fdt_paddr) + bswap32(hdr->off_dt_struct);
@@ -343,8 +350,7 @@ void FdtManager::early_scan_uart(uint64 fdt_paddr, uint64 *uart_addr,
     }
   }
 
-  *uart_addr = 0;
-  *uart_size = 0;
+  set_default_uart();
 }
 
 /* ------------------------------------------------------------------ */

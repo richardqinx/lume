@@ -16,6 +16,11 @@
 static uint64 g_uart_pa = 0;
 static uint64 g_uart_size = 0;
 static bool g_runtime_mapping_ready = false;
+static bool g_mmu_enabled = false;
+
+extern "C" void console_set_mmu_enabled() {
+    g_mmu_enabled = true;
+}
 
 extern "C" void early_putc(char c) {
     if (!g_uart_pa) return;
@@ -25,9 +30,14 @@ extern "C" void early_putc(char c) {
      * reachable via the bootstrap fixed direct map from entry.S.
      * After activation, switch to the runtime (possibly KASLR-slid) base.
      */
-    uint64 uart_va = g_runtime_mapping_ready
-                         ? pa_to_va(phys_addr(g_uart_pa)).raw
-                         : boot_pa_to_va(phys_addr(g_uart_pa)).raw;
+    uint64 uart_va = 0;
+    if (g_runtime_mapping_ready) {
+        uart_va = pa_to_va(phys_addr(g_uart_pa)).raw;
+    } else if (!g_mmu_enabled) {
+        uart_va = g_uart_pa;
+    } else {
+        uart_va = boot_pa_to_va(phys_addr(g_uart_pa)).raw;
+    }
 
     volatile auto* uart = reinterpret_cast<volatile uint8*>(uart_va);
     *uart = static_cast<uint8>(c);

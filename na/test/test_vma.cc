@@ -31,7 +31,7 @@ void selftest_vma() {
         ST_ASSERT_EQ(ret, 0);
 
         // Fault in the first page
-        ret = vmm_handle_page_fault(space, 0x400500, 0);
+        ret = vmm_handle_page_fault(space, 0x400500, VmFaultCause::Read);
         ST_ASSERT_EQ(ret, 0);
 
         // Verify mapping in hardware page table
@@ -41,11 +41,11 @@ void selftest_vma() {
         ST_ASSERT_NE(pa, 0ULL);
 
         // Fault in the second page
-        ret = vmm_handle_page_fault(space, 0x401FFF, 0);
+        ret = vmm_handle_page_fault(space, 0x401FFF, VmFaultCause::Read);
         ST_ASSERT_EQ(ret, 0);
 
         // Should reject fault outside VMA with -EFAULT
-        ret = vmm_handle_page_fault(space, 0x402000, 0);
+        ret = vmm_handle_page_fault(space, 0x402000, VmFaultCause::Read);
         ST_ASSERT_EQ(ret, -EFAULT);
 
         space->destroy();
@@ -58,13 +58,13 @@ void selftest_vma() {
         vmm_map_user(space, 0x10000, 0x2000, VM_READ);
 
         // Inside the region — should succeed
-        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x10500, 0), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x10500, VmFaultCause::Read), 0);
 
         // Unmap exactly
         vmm_unmap_user(space, 0x10000, 0x2000);
 
         // Should fail now with -EFAULT
-        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x10500, 0), -EFAULT);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x10500, VmFaultCause::Read), -EFAULT);
 
         space->destroy();
     }
@@ -75,15 +75,15 @@ void selftest_vma() {
         VmSpace* space = VmSpace::create();
         vmm_map_user(space, 0x200000, 0x1000, VM_READ | VM_WRITE);
 
-        // First fault allocates the physical frame
-        int ret = vmm_handle_page_fault(space, 0x200000, 0);
+        // First fault allocates the physical page
+        int ret = vmm_handle_page_fault(space, 0x200000, VmFaultCause::Read);
         ST_ASSERT_EQ(ret, 0);
 
         // Second fault on the same page should hit "already mapped" path
-        ret = vmm_handle_page_fault(space, 0x200100, 0);
+        ret = vmm_handle_page_fault(space, 0x200100, VmFaultCause::Read);
         ST_ASSERT_EQ(ret, 0);
 
-        // Verify both land on the same physical frame
+        // Verify both land on the same physical page
         uint64 pa1 = 0, pa2 = 0;
         pmap::lookup(space->root_pa, 0x200000, &pa1);
         pmap::lookup(space->root_pa, 0x200100, &pa2);
@@ -138,11 +138,11 @@ void selftest_vma() {
         vmm_unmap_user(space, 0x60000, 0x1000);
 
         // First and third should still be reachable
-        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x50000, 0), 0);
-        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x70000, 0), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x50000, VmFaultCause::Read), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x70000, VmFaultCause::Read), 0);
 
         // Middle should fail
-        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x60000, 0), -EFAULT);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x60000, VmFaultCause::Read), -EFAULT);
 
         space->destroy();
     }
@@ -152,7 +152,131 @@ void selftest_vma() {
     {
         ST_ASSERT_EQ(vmm_map_user(nullptr, 0x1000, 0x1000, VM_READ), -EINVAL);
         ST_ASSERT_EQ(vmm_unmap_user(nullptr, 0x1000, 0x1000), -EINVAL);
-        ST_ASSERT_EQ(vmm_handle_page_fault(nullptr, 0x1000, 0), -EINVAL);
+        ST_ASSERT_EQ(vmm_handle_page_fault(nullptr, 0x1000, VmFaultCause::Read), -EINVAL);
+    }
+    st_pass();
+
+    st_begin("vma: clone and copy-on-write");
+    {
+        VmSpace* parent = VmSpace::create();
+        vmm_map_user(parent, 0x80000, 0x1000, VM_READ | VM_WRITE);
+        
+        /* Trigger read fault in parent to allocate physical page */
+        ST_ASSERT_EQ(vmm_handle_page_fault(parent, 0x80000, VmFaultCause::Read), 0);
+        uint64 parent_pa_initial;
+        ST_ASSERT(pmap::lookup(parent->root_pa, 0x80000, &parent_pa_initial));
+        
+        /* Clone the address space */
+        VmSpace* child = vmm_clone(parent);
+        ST_ASSERT(child != nullptr);
+        
+        /* Verify child has the same physical page mapped but COW */
+        uint64 child_pa;
+        ST_ASSERT(pmap::lookup(child->root_pa, 0x80000, &child_pa));
+        ST_ASSERT_EQ(child_pa, parent_pa_initial);
+        ST_ASSERT(pmap::is_cow(child->root_pa, 0x80000));
+        ST_ASSERT(pmap::is_cow(parent->root_pa, 0x80000)); /* Parent also marked COW */
+        
+        /* Trigger Store Page Fault (cause=15) in child */
+        ST_ASSERT_EQ(vmm_handle_page_fault(child, 0x80000, VmFaultCause::Write), 0);
+        
+        /* Child should now have a new physical page, no longer COW */
+        uint64 child_pa_new;
+        ST_ASSERT(pmap::lookup(child->root_pa, 0x80000, &child_pa_new));
+        ST_ASSERT(child_pa_new != parent_pa_initial);
+        ST_ASSERT(!pmap::is_cow(child->root_pa, 0x80000));
+        
+        /* Parent is still mapped to the old page, still COW because it hasn't written */
+        uint64 parent_pa_current;
+        ST_ASSERT(pmap::lookup(parent->root_pa, 0x80000, &parent_pa_current));
+        ST_ASSERT_EQ(parent_pa_current, parent_pa_initial);
+        ST_ASSERT(pmap::is_cow(parent->root_pa, 0x80000));
+        
+        /* Trigger Store Page Fault in parent */
+        ST_ASSERT_EQ(vmm_handle_page_fault(parent, 0x80000, VmFaultCause::Write), 0);
+        ST_ASSERT(!pmap::is_cow(parent->root_pa, 0x80000));
+        
+        child->destroy();
+        parent->destroy();
+    }
+    st_pass();
+
+    st_begin("vma: gap search finds next free range");
+    {
+        VmSpace* space = VmSpace::create();
+        vmm_map_user(space, 0x1000, 0x3000, VM_READ);
+
+        uint64 va = mm_find_free_va(space, 0x1000, kPageSize);
+        ST_ASSERT_EQ(va, 0x4000ULL);
+
+        space->destroy();
+    }
+    st_pass();
+
+    st_begin("vma: reject overlapping mapping");
+    {
+        VmSpace* space = VmSpace::create();
+        ST_ASSERT_EQ(vmm_map_user(space, 0x20000, 0x2000, VM_READ), 0);
+        ST_ASSERT_EQ(vmm_map_user(space, 0x21000, 0x1000, VM_READ), -EINVAL);
+        space->destroy();
+    }
+    st_pass();
+
+    st_begin("vma: partial unmap splits a single VMA");
+    {
+        VmSpace* space = VmSpace::create();
+        ST_ASSERT_EQ(vmm_map_user(space, 0x80000, 0x3000, VM_READ | VM_WRITE), 0);
+
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x80000, VmFaultCause::Read), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x81000, VmFaultCause::Read), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x82000, VmFaultCause::Read), 0);
+
+        ST_ASSERT_EQ(vmm_unmap_user(space, 0x81000, 0x1000), 0);
+
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x80000, VmFaultCause::Read), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x82000, VmFaultCause::Read), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x81000, VmFaultCause::Read), -EFAULT);
+
+        space->destroy();
+    }
+    st_pass();
+
+    st_begin("vma: mprotect read-only blocks write faults");
+    {
+        VmSpace* space = VmSpace::create();
+        ST_ASSERT_EQ(vmm_map_user(space, 0x90000, 0x2000, VM_READ | VM_WRITE), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x90000, VmFaultCause::Read), 0);
+
+        ST_ASSERT_EQ(vmm_protect_user(space, 0x90000, 0x1000, VM_READ), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x90000, VmFaultCause::Write), -EFAULT);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0x91000, VmFaultCause::Write), 0);
+
+        space->destroy();
+    }
+    st_pass();
+
+    st_begin("vma: PROT_NONE unmaps existing pages");
+    {
+        VmSpace* space = VmSpace::create();
+        ST_ASSERT_EQ(vmm_map_user(space, 0xA0000, 0x1000, VM_READ | VM_WRITE), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0xA0000, VmFaultCause::Read), 0);
+
+        ST_ASSERT_EQ(vmm_protect_user(space, 0xA0000, 0x1000, 0), 0);
+        ST_ASSERT_EQ(vmm_handle_page_fault(space, 0xA0000, VmFaultCause::Read), -EFAULT);
+
+        space->destroy();
+    }
+    st_pass();
+
+    st_begin("vma: range covered check");
+    {
+        VmSpace* space = VmSpace::create();
+        ST_ASSERT_EQ(vmm_map_user(space, 0xB0000, 0x2000, VM_READ), 0);
+
+        ST_ASSERT(vma_range_covered(space, 0xB0000, 0xB1000));
+        ST_ASSERT(!vma_range_covered(space, 0xB0000, 0xB3000));
+
+        space->destroy();
     }
     st_pass();
 }

@@ -4,13 +4,13 @@
 #pragma once
 
 /*
- * Frame — Physical page frame descriptor
+ * Page — Physical page descriptor
  *
- * Each Frame describes one 4KB physical page.  A flat array of Frame
- * structs (frame_map) covers all physical memory discovered via FDT.
+ * Each Page describes one 4KB physical page. A flat array of Page
+ * structs (page_map) covers all physical memory discovered via FDT.
  *
  * Memory layout is compressed using a union: only one of free/slab
- * metadata is valid at a time, determined by `state`.  The refcount
+ * metadata is valid at a time, determined by `state`. The refcount
  * field is independent of the union to support COW sharing.
  *
  * Reference: docs/specs/pmm.md §3.1
@@ -23,23 +23,23 @@
 /* Forward declaration — defined in slab module (Phase 2) */
 class KmemCache;
 
-enum class FrameState : uint8 {
+enum class PageState : uint8 {
     Free,       // In Buddy free list
     PcpCached,  // In Per-CPU cache (invisible to buddy coalescing)
     Allocated,  // Handed out to Slab / VMM / user
     Slab,       // Backing a Slab cache
 };
 
-struct Frame {
+struct Page {
     /*
      * Reference count (atomic).
-     * Starts at 1 on allocation.  Incremented by fork() for COW pages.
-     * When decremented to 0, the frame is returned to the free pool.
+     * Starts at 1 on allocation. Incremented by fork() for COW pages.
+     * When decremented to 0, the page is returned to the free pool.
      */
     lume::atomic<uint32> refcount;
 
-    FrameState state;   // Current usage state
-    uint8 order;        // Buddy order (0–10, i.e. 4KB–4MB)
+    PageState state;  // Current usage state
+    uint8 order;      // Buddy order (0–10, i.e. 4KB–4MB)
 
     union {
         /* Valid when state == Free */

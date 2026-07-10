@@ -88,7 +88,7 @@ extern "C" void __init setup_vm(uintptr_t load_pa, uintptr_t dtb_pa)
     kernel_map.virt_offset         = 0;
     kernel_map.virt_addr           = KERNEL_LINK_ADDR + kernel_map.virt_offset;
     kernel_map.phys_addr           = load_pa;
-    kernel_map.size                = (uintptr_t)_end - (uintptr_t)_start;
+    kernel_map.size                = (uintptr_t)_kernel_end - (uintptr_t)_start;
     kernel_map.page_offset         = PAGE_OFFSET;
 
     /* Mirrors Linux: va_pa_offset is the constant added to a physical

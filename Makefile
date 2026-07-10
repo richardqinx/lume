@@ -16,24 +16,30 @@
 # ============================================================
 # Build Configuration
 # ============================================================
-BUILD   := build
+O ?= build
+BUILD := $(patsubst %/,%,$(O))
 
 # Make sure `make` with no arguments builds the kernel image, not the
-# first rule encountered during makefile parsing.  scripts/Kconfig.mk
-# (included next) defines `defconfig:` at the top of its rule list,
-# which would otherwise become the default goal and silently overwrite
-# .config from arch/$(ARCH)/defconfig.
+# first rule encountered during makefile parsing.
 .DEFAULT_GOAL := all
 
-# Load Kbuild helpers (Q, $(call cmd,...), quiet_cmd_* / cmd_* templates,
-# kbuild-objs translator).  Must come before Kconfig.mk so subsequent
-# rules can use $(call cmd,...) immediately.
+# Load command helpers before Kconfig and target evaluation.
 include scripts/Kbuild.include
 
-# Load Kconfig infrastructure (reads .config, sets KCPPFLAGS)
+# Load the O=-scoped configuration and derive compiler definitions.
 include scripts/Kconfig.mk
 
 ARCH    ?= $(CONFIG_ARCH)
+PLATFORM ?= qemu-virt
+BUILD_VARIANT ?= debug
+
+ifneq ($(filter $(BUILD_VARIANT),debug release),$(BUILD_VARIANT))
+$(error unsupported BUILD_VARIANT '$(BUILD_VARIANT)' (expected debug or release))
+endif
+
+# Toolchain selection needs the configured architecture but must precede flag
+# and module evaluation.
+include scripts/build/toolchain.mk
 
 # Two boot products — same pair as Linux RISC-V's arch/riscv/boot/Makefile
 # (vmlinux + Image), but named LumeOS-style:
@@ -46,6 +52,7 @@ IMAGE  := $(BUILD)/vmlume.bin
 INITRAMFS_DIR   := $(BUILD)/initramfs
 INITRAMFS_CPIO  := $(BUILD)/initramfs.cpio
 INITRAMFS_OBJ   := $(BUILD)/initramfs.o
+INITRAMFS_ASM   := usr/initramfs.S
 USR_INIT_ELF    := $(BUILD)/usr/init
 # Relocations: linker emits .rela.dyn under -shared -Bsymbolic; boot
 # code in arch/riscv/mm/init.cc::relocate_kernel walks it at startup.
@@ -53,36 +60,6 @@ LDS_SRC := arch/$(ARCH)/kernel/lumeos.lds.S
 LINKER_SCRIPT := $(BUILD)/lumeos.lds
 PYTHON ?= python3
 
-# ============================================================
-# Toolchain Detection
-# ============================================================
-ifndef TOOLCHAIN_PREFIX
-ifeq ($(ARCH),riscv)
-    # Prefer the linux-gnu toolchain — it supports -shared / -pie which
-    # are required to emit .rela.dyn (Linux RISC-V kernel uses the same).
-    # The bare-metal `riscv64-unknown-elf-` is kept only as a last-resort
-    # fallback; with that one, `-shared` fails ("not supported") and the
-    # kernel can't relocate at runtime.
-    TOOLCHAIN_PREFIX := $(shell \
-        if command -v riscv64-unknown-linux-gnu-g++ >/dev/null 2>&1; then \
-            echo riscv64-unknown-linux-gnu-; \
-        elif command -v riscv64-linux-gnu-g++ >/dev/null 2>&1; then \
-            echo riscv64-linux-gnu-; \
-        else \
-            echo riscv64-unknown-linux-gnu-; \
-        fi)
-else ifeq ($(ARCH),aarch64)
-    TOOLCHAIN_PREFIX := aarch64-linux-gnu-
-else ifeq ($(ARCH),x86_64)
-    TOOLCHAIN_PREFIX := x86_64-linux-gnu-
-endif
-endif
-
-CC      := $(TOOLCHAIN_PREFIX)gcc
-CXX     := $(TOOLCHAIN_PREFIX)g++
-LD      := $(TOOLCHAIN_PREFIX)ld
-OBJCOPY := $(TOOLCHAIN_PREFIX)objcopy
-OBJDUMP := $(TOOLCHAIN_PREFIX)objdump
 # Objcopy output formats for binary-to-ELF relocation blob
 OBJCOPY_ELF_riscv := elf64-littleriscv
 OBJCOPY_ELF_aarch64 := elf64-littleaarch64
@@ -94,92 +71,117 @@ OBJCOPY_BINARCH_aarch64 := aarch64
 OBJCOPY_BINARCH_x86_64 := i386:x86-64
 OBJCOPY_BINARCH := $(OBJCOPY_BINARCH_$(ARCH))
 
-# Common flags (base, before module includes)
-WARNINGS := -Wall -Wextra -Wno-unused-parameter
+# Common include roots. Environment-specific flags are defined after target
+# usage requirements have been collected.
 INCLUDES := -Iinclude -I.
 
 # ============================================================
-# Source Collection (Non-Recursive Module Fragments)
-# Module .mk files may append to SRCS_CC, SRCS_S, INCLUDES
+# Declarative Target Graph
 # ============================================================
-SRCS_CC :=
-SRCS_C  :=
-SRCS_S  :=
-SRCS_s  :=
+include scripts/build/targets.mk
+include Build.mk
+$(eval $(call validate-targets))
 
--include arch/$(ARCH)/module.mk
-include kernel/module.mk
-include mm/module.mk
-include fs/module.mk
-include drivers/base/module.mk
-include drivers/module.mk
-include drivers/tty/module.mk
-include fdt/module.mk
-include lib/module.mk
-include test/module.mk
+KERNEL_ROOT := kernel/image
+KERNEL_TARGETS := $(sort $(call target-closure,$(KERNEL_ROOT)))
+KERNEL_LINK_TARGET_ORDER := $(call unique-words,$(call target-link-order,$(KERNEL_ROOT)))
+KERNEL_SOURCE_KINDS := object-library source-set static-library whole-archive kernel-test
+KERNEL_SOURCE_TARGETS := $(foreach target,$(KERNEL_TARGETS),\
+    $(if $(filter $(KERNEL_SOURCE_KINDS),$(target.$(target).kind)),$(target)))
+KERNEL_SOURCES := $(sort $(foreach target,$(KERNEL_SOURCE_TARGETS),\
+    $(target.$(target).sources)))
 
-# Compiler flags (defined AFTER includes so INCLUDES is complete)
-CFLAGS   := $(WARNINGS) -O2 -g \
-            -ffreestanding -nostdlib \
-            -mcmodel=medany \
-            -fPIE \
-            -MMD -MP \
-            $(KCPPFLAGS) \
-            $(INCLUDES) \
-            -I$(BUILD)/generated
+SRCS_CC := $(filter %.cc,$(KERNEL_SOURCES))
+SRCS_C  := $(filter %.c,$(KERNEL_SOURCES))
+SRCS_S  := $(filter %.S,$(KERNEL_SOURCES))
+SRCS_s  := $(filter %.s,$(KERNEL_SOURCES))
 
-# -fPIE makes the compiler emit position-independent code (PC-relative
-# addressing + GOT for globals), which is what `-shared` linking expects.
-# Mirrors Linux's arch/riscv/Makefile under CONFIG_RELOCATABLE=y:
-#   KBUILD_CFLAGS += -fPIE
+# Only public usage requirements propagate. Private include paths and flags are
+# attached to the objects belonging to the declaring target below.
+INCLUDES += $(addprefix -I,$(call target-public-includes,$(KERNEL_ROOT)))
+INCLUDES += $(foreach dir,$(call target-public-after-includes,$(KERNEL_ROOT)),-idirafter $(dir))
 
-# C flags for musl libc sources: add libc-shim headers first
-CFLAGS_LIBC := $(CFLAGS) -Iinclude/libc-shim \
-               -Wno-parentheses -Wno-sign-compare
-
-CXXFLAGS := $(CFLAGS) \
-            -std=c++17 \
-            -fno-exceptions -fno-rtti -fno-use-cxa-atexit \
-            -fno-threadsafe-statics
-
-# Assembler flags MUST NOT include -fPIE.
-# Linux's arch/riscv/Makefile adds -fPIE only to KBUILD_CFLAGS, NOT to
-# KBUILD_AFLAGS: with -fPIE the gcc driver puts the assembler in PIC
-# mode, where the `la` macro silently expands to a GOT-indirect load
-# (`auipc + ld` reading a slot that holds the link-time VA).  In our
-# pre-MMU boot path that VA is unmapped, so any `la sym, sym` faults
-# and reboots into a `_start` loop.  Stripping -fPIE makes `la` emit
-# direct PC-relative addressing (`auipc + addi`) which works at PA.
-ASFLAGS  := $(filter-out -fPIE,$(CFLAGS))
-
-# Link as a position-independent shared object so the linker emits
-# `.rela.dyn` with R_RISCV_RELATIVE entries that the boot stub applies
-# at load time.  Mirrors Linux's arch/riscv/Makefile §10:
-#   LDFLAGS_vmlinux += -shared -Bsymbolic -z notext
-# `-Bsymbolic` resolves all global refs at link time (no dynamic
-# resolution); `-z notext` lets us keep relocations in code pages.
-LDFLAGS  := -nostdlib -shared -Bsymbolic -z notext -z norelro --no-dynamic-linker
+include scripts/build/environments/kernel.mk
+include scripts/build/environments/phys.mk
 
 # ============================================================
 # Object File Computation
 # ============================================================
-OBJS := $(patsubst %.cc,$(BUILD)/%.o,$(SRCS_CC)) \
-        $(patsubst %.c,$(BUILD)/%.o,$(SRCS_C)) \
-        $(patsubst %.S,$(BUILD)/%.o,$(SRCS_S)) \
-        $(patsubst %.s,$(BUILD)/%.o,$(SRCS_s))
+# A source may be compiled by multiple targets/environments. Object identity
+# therefore includes both the logical target and source path.
+source-object = $(BUILD)/obj/$(call target-key,$(1))/$(basename $(2)).o
+define apply-target-usage
+target.$(1).objects := $$(foreach src,$$(target.$(1).sources),$$(call source-object,$(1),$$(src)))
+$$(target.$(1).objects): PRIVATE_INCLUDES := \
+    $$(addprefix -I,$$(call target-compile-includes,$(1))) \
+    $$(foreach dir,$$(call target-compile-after-includes,$(1)),-idirafter $$(dir))
+$$(target.$(1).objects): PRIVATE_DEFINES := $$(addprefix -D,$$(call target-compile-defines,$(1)))
+$$(target.$(1).objects): PRIVATE_CFLAGS := $$(target.$(1).cflags)
+$$(target.$(1).objects): PRIVATE_CXXFLAGS := $$(target.$(1).cxxflags)
+$$(target.$(1).objects): PRIVATE_ASFLAGS := $$(target.$(1).asflags)
+endef
+$(foreach target,$(KERNEL_SOURCE_TARGETS),$(eval $(call apply-target-usage,$(target))))
 
+define apply-source-identity
+$(call source-object,$(1),$(2)): PRIVATE_SOURCE := $(2)
+endef
+$(foreach target,$(KERNEL_SOURCE_TARGETS),$(foreach src,$(target.$(target).sources),\
+    $(eval $(call apply-source-identity,$(target),$(src)))))
+
+OBJS := $(foreach target,$(KERNEL_SOURCE_TARGETS),$(target.$(target).objects))
 DEPS := $(OBJS:.o=.d)
+
+# libfdt is freestanding but intentionally does not use the libc-shim include
+# overlay used by the imported string implementation.
+$(target.lib/libfdt.objects): CFLAGS_LIBC = $(CFLAGS) -std=gnu23
+
+KERNEL_STATIC_TARGETS := $(foreach target,$(KERNEL_SOURCE_TARGETS),\
+    $(if $(filter static-library,$(target.$(target).kind)),$(target)))
+KERNEL_WHOLE_TARGETS := $(foreach target,$(KERNEL_SOURCE_TARGETS),\
+    $(if $(filter whole-archive,$(target.$(target).kind)),$(target)))
+KERNEL_OBJECT_TARGETS := $(filter-out $(KERNEL_STATIC_TARGETS) $(KERNEL_WHOLE_TARGETS),\
+    $(KERNEL_SOURCE_TARGETS))
+
+define define-archive
+target.$(1).archive := $(BUILD)/lib/$(call target-key,$(1)).a
+$$(target.$(1).archive): PRIVATE_ARCHIVE_OBJECTS := $$(target.$(1).objects)
+$$(target.$(1).archive): $$(target.$(1).objects) FORCE
+	$$(Q)mkdir -p $$(dir $$@)
+	$$(call if_changed,archive)
+endef
+$(foreach target,$(KERNEL_STATIC_TARGETS) $(KERNEL_WHOLE_TARGETS),\
+    $(eval $(call define-archive,$(target))))
+
+KERNEL_LINK_OBJECTS := $(foreach target,$(KERNEL_LINK_TARGET_ORDER),\
+    $(if $(filter $(target),$(KERNEL_OBJECT_TARGETS)),$(target.$(target).objects)))
+KERNEL_LINK_ARCHIVES := $(foreach target,$(KERNEL_LINK_TARGET_ORDER),\
+    $(if $(filter $(target),$(KERNEL_STATIC_TARGETS)),$(target.$(target).archive)))
+KERNEL_LINK_WHOLE := $(foreach target,$(KERNEL_LINK_TARGET_ORDER),\
+    $(if $(filter $(target),$(KERNEL_WHOLE_TARGETS)),$(target.$(target).archive)))
+KERNEL_LINK_INPUTS := $(KERNEL_LINK_OBJECTS) $(KERNEL_LINK_ARCHIVES) \
+    $(if $(KERNEL_LINK_WHOLE),--whole-archive $(KERNEL_LINK_WHOLE) --no-whole-archive)
 
 # ============================================================
 # Build Rules
 # ============================================================
-.PHONY: all clean run debug fmt disasm defconfig savedefconfig showconfig
+.PHONY: all clean run debug fmt disasm defconfig savedefconfig showconfig \
+        help info check-toolchain check-image targets target-info \
+        host-libraries host-tests kernel-tests compile_commands \
+        phys-libraries toolchain-probe graph FORCE
 
-all: $(VMLUME) $(IMAGE)
+FORCE:
+
+all: $(VMLUME) $(IMAGE) check-image
+
+check-image: $(VMLUME)
+	@RE=$(READELF); NM=$(NM); \
+	  scripts/build/check-kernel-elf.sh $(VMLUME) "$$RE" "$$NM" $(ARCH)
 
 # Generate autoconf.h before any compilation
-$(AUTOCONF_H): scripts/Kconfig.mk $(wildcard .config)
-	$(generate-autoconf)
+$(AUTOCONF_H): scripts/Kconfig.mk $(wildcard $(KCONFIG_CONFIG)) \
+               scripts/build/generate-autoconf.sh FORCE
+	$(Q)mkdir -p $(dir $@)
+	$(call if_changed,autoconf)
 
 # ============================================================
 # Generated header: asm-offsets.h
@@ -199,27 +201,20 @@ ASM_OFFSETS_H   := $(BUILD)/generated/asm-offsets.h
 ASM_OFFSETS_SED := scripts/extract-asm-offsets.sed
 
 # Compile asm-offsets.c to *.s only — we never want the .o linked in.
-$(ASM_OFFSETS_S): $(ASM_OFFSETS_C) $(AUTOCONF_H)
-	@echo "  CC -S   $<"
-	@mkdir -p $(dir $@)
-	@$(CC) $(CFLAGS_LIBC) -S $< -o $@
+$(ASM_OFFSETS_S): PRIVATE_SOURCE := $(ASM_OFFSETS_C)
+$(ASM_OFFSETS_S): $(ASM_OFFSETS_C) $(AUTOCONF_H) FORCE
+	$(Q)mkdir -p $(dir $@)
+	$(call if_changed,cc_s_c)
 
 # Rewrite ->NAME markers into #define lines.  Header guard hand-rolled
 # at the top, sed body in the middle, closing #endif at the bottom.
-$(ASM_OFFSETS_H): $(ASM_OFFSETS_S) $(ASM_OFFSETS_SED)
-	@echo "  GEN     $@"
-	@mkdir -p $(dir $@)
-	@(echo "/* AUTO-GENERATED — DO NOT EDIT */"; \
-	  echo "/* Generated from $(ASM_OFFSETS_C) by scripts/extract-asm-offsets.sed */"; \
-	  echo "#ifndef _LUME_GENERATED_ASM_OFFSETS_H"; \
-	  echo "#define _LUME_GENERATED_ASM_OFFSETS_H"; \
-	  echo ""; \
-	  sed -n -f $(ASM_OFFSETS_SED) $<; \
-	  echo ""; \
-	  echo "#endif /* _LUME_GENERATED_ASM_OFFSETS_H */") > $@
+$(ASM_OFFSETS_H): $(ASM_OFFSETS_S) $(ASM_OFFSETS_SED) \
+                  scripts/build/generate-asm-offsets.sh FORCE
+	$(Q)mkdir -p $(dir $@)
+	$(call if_changed,gen_asm_offsets)
 
 # All objects depend on autoconf.h and asm-offsets.h
-$(OBJS): $(AUTOCONF_H) $(ASM_OFFSETS_H)
+$(OBJS): $(AUTOCONF_H) $(ASM_OFFSETS_H) FORCE
 
 # ============================================================
 # Generic %.pi.o post-processing rule
@@ -265,10 +260,10 @@ $(BUILD)/%.pi.o: $(BUILD)/%.o
 	$(call cmd,objcopy)
 
 # Preprocess linker script template (.lds.S → .lds)
-$(LINKER_SCRIPT): $(LDS_SRC) include/lume/lumeos.lds.h
-	@echo "  LDS     $@"
-	@mkdir -p $(dir $@)
-	@$(CC) -E -P -x c $(INCLUDES) $< -o $@
+$(LINKER_SCRIPT): PRIVATE_SOURCE := $(LDS_SRC)
+$(LINKER_SCRIPT): $(LDS_SRC) include/lume/lumeos.lds.h FORCE
+	$(Q)mkdir -p $(dir $@)
+	$(call if_changed,linker_script)
 
 # ============================================================
 # Initramfs: pack a root filesystem into a newc cpio.
@@ -282,84 +277,143 @@ $(LINKER_SCRIPT): $(LDS_SRC) include/lume/lumeos.lds.h
 # Sourced from $(CONFIG_INITRAMFS_SOURCE) — see scripts/Kconfig.mk.
 # ============================================================
 
-# Host compiler — distinct from $(CC), which may be the cross compiler.
-HOSTCC      ?= cc
-HOSTCFLAGS  ?= -O2 -Wall
+# Host compiler environment is distinct from the cross kernel environment.
+include scripts/build/environments/host.mk
 
-# Output path matches Linux convention (usr/gen_init_cpio) so the
-# verbatim copy of scripts/gen_initramfs.sh from Linux finds it via its
-# hardcoded relative path when invoked from the kernel source root.
-GEN_INIT_CPIO := usr/gen_init_cpio
+# Host tools are registered targets and use the host compiler environment.
+HOST_TOOL_TARGETS := $(foreach target,$(targets),\
+    $(if $(filter host-tool,$(target.$(target).kind)),$(target)))
+HOST_LIBRARY_TARGETS := $(foreach target,$(targets),\
+    $(if $(filter host-library,$(target.$(target).kind)),$(target)))
+HOST_TEST_TARGETS := $(foreach target,$(targets),\
+    $(if $(filter host-test,$(target.$(target).kind)),$(target)))
+PHYS_LIBRARY_TARGETS := $(foreach target,$(targets),\
+    $(if $(filter phys-library,$(target.$(target).kind)),$(target)))
+define define-host-tool
+target.$(1).output := $(BUILD)/host/$(call target-key,$(1))
+$$(target.$(1).output): PRIVATE_HOST_SOURCE := $$(firstword $$(target.$(1).sources))
+$$(target.$(1).output): PRIVATE_HOST_CFLAGS := $$(target.$(1).host-cflags)
+$$(target.$(1).output): $$(target.$(1).sources) FORCE
+	$$(Q)mkdir -p $$(dir $$@)
+	$$(call if_changed,host_tool)
+endef
+$(foreach target,$(HOST_TOOL_TARGETS),$(eval $(call define-host-tool,$(target))))
 
-$(GEN_INIT_CPIO): usr/gen_init_cpio.c
-	@echo "  HOSTCC  $@"
-	@$(HOSTCC) $(HOSTCFLAGS) -o $@ $<
+host-source-object = $(BUILD)/host/obj/$(call target-key,$(1))/$(basename $(2)).o
+define define-host-source
+$(call host-source-object,$(1),$(2)): PRIVATE_SOURCE := $(2)
+$(call host-source-object,$(1),$(2)): $(2) FORCE
+	$$(Q)mkdir -p $$(dir $$@)
+	$$(call if_changed,$(if $(filter %.cc,$(2)),host_cxx_o_cc,host_cc_o_c))
+endef
+define define-host-library
+target.$(1).objects := $$(foreach src,$$(target.$(1).sources),$$(call host-source-object,$(1),$$(src)))
+target.$(1).archive := $(BUILD)/host/lib/$(call target-key,$(1)).a
+$$(foreach src,$$(target.$(1).sources),$$(eval $$(call define-host-source,$(1),$$(src))))
+$$(target.$(1).archive): PRIVATE_ARCHIVE_OBJECTS := $$(target.$(1).objects)
+$$(target.$(1).archive): $$(target.$(1).objects) FORCE
+	$$(Q)mkdir -p $$(dir $$@)
+	$$(call if_changed,host_archive)
+endef
+$(foreach target,$(HOST_LIBRARY_TARGETS),$(eval $(call define-host-library,$(target))))
+HOST_DEPS := $(foreach target,$(HOST_LIBRARY_TARGETS),$(target.$(target).objects:.o=.d))
+
+define define-host-test
+target.$(1).objects := $$(foreach src,$$(target.$(1).sources),$$(call host-source-object,$(1),$$(src)))
+target.$(1).output := $(BUILD)/host/test/$(call target-key,$(1))
+$$(foreach src,$$(target.$(1).sources),$$(eval $$(call define-host-source,$(1),$$(src))))
+$$(target.$(1).output): PRIVATE_HOST_OBJECTS := $$(target.$(1).objects)
+$$(target.$(1).output): PRIVATE_HOST_LIBS := $$(foreach dep,$$(call target-deps,$(1)),$$(target.$$(dep).archive))
+$$(target.$(1).output): $$(target.$(1).objects) \
+    $$(foreach dep,$$(call target-deps,$(1)),$$(target.$$(dep).archive)) FORCE
+	$$(Q)mkdir -p $$(dir $$@)
+	$$(call if_changed,host_link)
+endef
+$(foreach target,$(HOST_TEST_TARGETS),$(eval $(call define-host-test,$(target))))
+HOST_TEST_DEPS := $(foreach target,$(HOST_TEST_TARGETS),$(target.$(target).objects:.o=.d))
+DEPS += $(HOST_DEPS) $(HOST_TEST_DEPS)
+
+host-libraries: $(foreach target,$(HOST_LIBRARY_TARGETS),$(target.$(target).archive))
+
+host-tests: $(foreach target,$(HOST_TEST_TARGETS),$(target.$(target).output))
+	@set -e; $(foreach target,$(HOST_TEST_TARGETS),\
+		echo "  TEST    $(target)"; $(target.$(target).output);)
+
+phys-source-object = $(BUILD)/phys/obj/$(call target-key,$(1))/$(basename $(2)).o
+define define-phys-source
+$(call phys-source-object,$(1),$(2)): PRIVATE_SOURCE := $(2)
+$(call phys-source-object,$(1),$(2)): $(2) $(AUTOCONF_H) FORCE
+	$$(Q)mkdir -p $$(dir $$@)
+	$$(call if_changed,$(if $(filter %.cc,$(2)),phys_cxx_o_cc,$(if $(filter %.c,$(2)),phys_cc_o_c,phys_as_o_S)))
+endef
+define define-phys-library
+target.$(1).objects := $$(foreach src,$$(target.$(1).sources),$$(call phys-source-object,$(1),$$(src)))
+target.$(1).archive := $(BUILD)/phys/lib/$(call target-key,$(1)).a
+$$(foreach src,$$(target.$(1).sources),$$(eval $$(call define-phys-source,$(1),$$(src))))
+$$(target.$(1).archive): PRIVATE_ARCHIVE_OBJECTS := $$(target.$(1).objects)
+$$(target.$(1).archive): $$(target.$(1).objects) FORCE
+	$$(Q)mkdir -p $$(dir $$@)
+	$$(call if_changed,archive)
+endef
+$(foreach target,$(PHYS_LIBRARY_TARGETS),$(eval $(call define-phys-library,$(target))))
+PHYS_DEPS := $(foreach target,$(PHYS_LIBRARY_TARGETS),$(target.$(target).objects:.o=.d))
+DEPS += $(PHYS_DEPS)
+
+phys-libraries: $(foreach target,$(PHYS_LIBRARY_TARGETS),$(target.$(target).archive))
+
+kernel-tests: all
+	@test "$(CONFIG_SELFTEST)" = y || { \
+		echo "kernel-tests requires CONFIG_SELFTEST=y in $(KCONFIG_CONFIG)"; exit 2; }
+
+GEN_INIT_CPIO := $(target.host/gen_init_cpio.output)
 
 INITRAMFS_SOURCE := $(CONFIG_INITRAMFS_SOURCE)
 
-# Record the chosen source so changing CONFIG_INITRAMFS_SOURCE on the
-# command line forces a rebuild — without this, `make` only compares
-# file mtimes and would happily reuse a cpio packed from a different
-# source as long as that other source isn't newer.  Evaluated at
-# Makefile parse time so the dep edge is correct from the first rule
-# check.  Mirrors the idea behind Linux's $(call if_changed,...).
-INITRAMFS_SRC_STAMP := $(BUILD)/.initramfs_src.stamp
-$(shell mkdir -p $(BUILD) 2>/dev/null; \
-        prev=$$([ -f "$(INITRAMFS_SRC_STAMP)" ] && cat "$(INITRAMFS_SRC_STAMP)" || echo); \
-        if [ "$$prev" != "$(INITRAMFS_SOURCE)" ]; then \
-            printf '%s\n' "$(INITRAMFS_SOURCE)" > "$(INITRAMFS_SRC_STAMP)"; \
-        fi)
+# Encode the selected source in the stamp filename. Changing the source changes
+# the dependency without writing anything during Makefile parsing.
+INITRAMFS_SOURCE_KEY := $(shell printf '%s' '$(INITRAMFS_SOURCE)' | cksum | cut -d' ' -f1)
+INITRAMFS_SRC_STAMP := $(BUILD)/.initramfs-source-$(INITRAMFS_SOURCE_KEY)
+
+$(INITRAMFS_SRC_STAMP):
+	@mkdir -p $(dir $@)
+	@touch $@
 
 $(INITRAMFS_CPIO): $(INITRAMFS_SOURCE) $(INITRAMFS_SRC_STAMP) \
-                   $(GEN_INIT_CPIO) scripts/gen_initramfs.sh
-	@echo "  INITRAMFS $(INITRAMFS_SOURCE)"
-	@mkdir -p $(dir $@)
-	@./scripts/gen_initramfs.sh -o $@ \
-		-u $(CONFIG_INITRAMFS_ROOT_UID) \
-		-g $(CONFIG_INITRAMFS_ROOT_GID) \
-		$(INITRAMFS_SOURCE)
+                   $(GEN_INIT_CPIO) scripts/gen_initramfs.sh \
+                   scripts/build/generate-initramfs.sh FORCE
+	$(Q)mkdir -p $(dir $@)
+	$(call if_changed,initramfs)
 
-$(INITRAMFS_OBJ): $(INITRAMFS_CPIO)
-	@echo "  OBJCOPY $@ (initramfs)"
-	@$(OBJCOPY) -I binary -O $(OBJCOPY_ELF) -B $(OBJCOPY_BINARCH) \
-		--rename-section .data=.init.ramfs,alloc,load,readonly,data,contents \
-		$< $@
+$(INITRAMFS_OBJ): PRIVATE_SOURCE := $(INITRAMFS_ASM)
+$(INITRAMFS_OBJ): $(INITRAMFS_CPIO) $(INITRAMFS_ASM) FORCE
+	$(Q)mkdir -p $(dir $@)
+	$(call if_changed,initramfs_obj)
 
 # Single-pass kernel link.  With `-shared -Bsymbolic`, the linker
 # emits `.rela.dyn` containing R_RISCV_RELATIVE entries directly into
 # the output ELF — no separate gen_reloc pass.
-$(VMLUME): $(OBJS) $(INITRAMFS_OBJ) $(LINKER_SCRIPT)
-	@echo "  LD      $@"
-	@mkdir -p $(dir $@)
-	@$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS) $(INITRAMFS_OBJ)
-	@$(TOOLCHAIN_PREFIX)size $@
+$(VMLUME): $(OBJS) $(foreach target,$(KERNEL_STATIC_TARGETS) $(KERNEL_WHOLE_TARGETS),\
+                         $(target.$(target).archive)) \
+           $(INITRAMFS_OBJ) $(LINKER_SCRIPT) FORCE
+	$(Q)mkdir -p $(dir $@)
+	$(call if_changed,link_vmlume)
 
 # Image = raw binary, mirrors Linux's `arch/riscv/boot/Image` (objcopy
 # vmlinux to raw bytes, no ELF header — what U-Boot or QEMU's `-bios`
 # bare-loading would consume).  Linux always builds both vmlinux and
 # Image; LumeOS follows the same convention.
-$(IMAGE): $(VMLUME)
-	@echo "  OBJCOPY $@"
-	@$(OBJCOPY) -O binary $< $@
+$(IMAGE): $(VMLUME) FORCE
+	$(call if_changed,objcopy_bin)
 
-# Compile C++ sources.  Recipe goes through $(call cmd,...) so that
-# `make V=1` echoes the full command line.  $(Q) prefix on mkdir keeps
-# the directory-creation step silent in quiet mode but visible at V=1.
-$(BUILD)/%.o: %.cc
-	$(Q)mkdir -p $(dir $@)
-	$(call cmd,cxx_o_cc)
-
-$(BUILD)/%.o: %.c
-	$(Q)mkdir -p $(dir $@)
-	$(call cmd,cc_o_c)
-
-$(BUILD)/%.o: %.S
-	$(Q)mkdir -p $(dir $@)
-	$(call cmd,as_o_S)
-
-$(BUILD)/%.o: %.s
-	$(Q)mkdir -p $(dir $@)
-	$(call cmd,as_o_S)
+# Materialize one explicit action per target/source pair. This avoids accidental
+# object reuse when the same source is built in more than one environment.
+define define-kernel-source
+$(call source-object,$(1),$(2)): $(2)
+	$$(Q)mkdir -p $$(dir $$@)
+	$$(call if_changed,$(if $(filter %.cc,$(2)),cxx_o_cc,$(if $(filter %.c,$(2)),cc_o_c,as_o_S)))
+endef
+$(foreach target,$(KERNEL_SOURCE_TARGETS),$(foreach src,$(target.$(target).sources),\
+    $(eval $(call define-kernel-source,$(target),$(src)))))
 
 # Auto-dependency tracking
 -include $(DEPS)
@@ -412,8 +466,128 @@ lint:
 
 # Print build info (for debugging Makefile issues)
 info:
-	@echo "TOOLCHAIN_PREFIX = $(TOOLCHAIN_PREFIX)"
-	@echo "SRCS_CC = $(SRCS_CC)"
-	@echo "SRCS_S  = $(SRCS_S)"
-	@echo "OBJS    = $(OBJS)"
-	@echo "KCPPFLAGS = $(KCPPFLAGS)"
+	@echo "LumeOS build configuration"
+	@echo "  ARCH              $(ARCH)"
+	@echo "  PLATFORM          $(PLATFORM)"
+	@echo "  VARIANT           $(BUILD_VARIANT)"
+	@echo "  OUTPUT            $(BUILD)"
+	@echo "  COMPILER          $(COMPILER_FAMILY): $(CXX)"
+	@echo "  TARGET            $(TARGET_TRIPLE)"
+	@echo "  GCC_TOOLCHAIN     $(GCC_TOOLCHAIN)"
+	@echo "  SYSROOT           $(GCC_SYSROOT)"
+	@echo "  LINKER            $(LINKER_FAMILY): $(LD)"
+	@echo "  OBJCOPY           $(OBJCOPY)"
+	@echo "  INITRAMFS         $(INITRAMFS_SOURCE)"
+	@echo "  C++ STANDARD      C++23"
+	@echo "  C++ LIBRARY       $(CXX_STDLIB)"
+	@echo "  C++ ABI           $(CXX_ABI)"
+	@echo "  COMPILER RUNTIME  $(COMPILER_RUNTIME)"
+	@echo "  CONFIG            $(KCONFIG_CONFIG)"
+	@echo "  BUILD ROOT        $(KERNEL_ROOT)"
+	@echo "  TARGETS           $(words $(KERNEL_TARGETS)) selected / $(words $(targets)) registered"
+
+targets:
+	@$(foreach target,$(targets),printf '%-24s %-16s %s\n' \
+		'$(target)' '$(target.$(target).kind)' '$(target.$(target).deps)';)
+
+target-info:
+	@test -n "$(TARGET)" || { echo "usage: make target-info TARGET=<name>"; exit 2; }
+	@$(if $(filter $(TARGET),$(targets)),,echo "unknown target: $(TARGET)"; exit 2;)
+	@echo "Target:           $(TARGET)"
+	@echo "Kind:             $(target.$(TARGET).kind)"
+	@echo "Dependencies:     $(target.$(TARGET).deps)"
+	@echo "Public deps:      $(target.$(TARGET).public-deps)"
+	@echo "Private deps:     $(target.$(TARGET).private-deps)"
+	@echo "Link deps:        $(target.$(TARGET).link-deps)"
+	@echo "Tool deps:        $(target.$(TARGET).tool-deps)"
+	@echo "Generated deps:   $(target.$(TARGET).generated-deps)"
+	@echo "Closure:          $(sort $(call target-closure,$(TARGET)))"
+	@echo "Public includes:  $(target.$(TARGET).public-includes)"
+	@echo "Private includes: $(target.$(TARGET).private-includes)"
+	@echo "Sources:          $(target.$(TARGET).sources)"
+
+TARGET_GRAPH := $(BUILD)/targets.dot
+graph:
+	@mkdir -p $(BUILD)
+	@$(file >$(TARGET_GRAPH),digraph lume_build {)
+	@$(foreach target,$(targets),$(file >>$(TARGET_GRAPH),  "$(target)" [label="$(target)\n$(target.$(target).kind)"];))
+	@$(foreach target,$(targets),$(foreach dep,$(call target-deps,$(target)),\
+		$(file >>$(TARGET_GRAPH),  "$(target)" -> "$(dep)";)))
+	@$(file >>$(TARGET_GRAPH),})
+	@echo "  GRAPH   $(TARGET_GRAPH)"
+
+COMPDB := $(BUILD)/compile_commands.json
+COMPDB_INPUT := $(BUILD)/.compile_commands.tsv
+compile-command = $(if $(filter %.cc,$(2)),$(CXX) $(CXXFLAGS) \
+    $(addprefix -I,$(call target-compile-includes,$(1))) \
+    $(foreach dir,$(call target-compile-after-includes,$(1)),-idirafter $(dir)) \
+    $(addprefix -D,$(call target-compile-defines,$(1))) $(target.$(1).cxxflags),\
+    $(CC) $(if $(filter %.c,$(2)),$(CFLAGS_LIBC) \
+    $(addprefix -I,$(call target-compile-includes,$(1))) \
+    $(foreach dir,$(call target-compile-after-includes,$(1)),-idirafter $(dir)) \
+    $(addprefix -D,$(call target-compile-defines,$(1))) $(target.$(1).cflags),\
+    $(ASFLAGS) $(addprefix -I,$(call target-compile-includes,$(1))) \
+    $(foreach dir,$(call target-compile-after-includes,$(1)),-idirafter $(dir)) \
+    $(addprefix -D,$(call target-compile-defines,$(1))) \
+    $(target.$(1).asflags))) -c $(2) -o $(call source-object,$(1),$(2))
+
+$(BUILD):
+	@mkdir -p $@
+
+$(COMPDB_INPUT): FORCE | $(BUILD)
+	@$(file >$(COMPDB_INPUT))
+	@$(foreach target,$(KERNEL_SOURCE_TARGETS),$(foreach src,$(target.$(target).sources),\
+		$(file >>$(COMPDB_INPUT),$(src)	$(call source-object,$(target),$(src))	$(call compile-command,$(target),$(src)))))
+
+compile_commands: $(COMPDB_INPUT)
+	@$(PYTHON) scripts/build/write-compdb.py $(COMPDB_INPUT) $(COMPDB)
+	@echo "  COMPDB  $(COMPDB)"
+
+check-toolchain:
+	@command -v $(firstword $(CC)) >/dev/null || { echo "missing C compiler: $(CC)"; exit 1; }
+	@command -v $(firstword $(CXX)) >/dev/null || { echo "missing C++ compiler: $(CXX)"; exit 1; }
+	@command -v $(firstword $(LD)) >/dev/null || { echo "missing linker: $(LD)"; exit 1; }
+	@command -v $(firstword $(OBJCOPY)) >/dev/null || { echo "missing objcopy: $(OBJCOPY)"; exit 1; }
+	@$(CXX) $(TOOLCHAIN_CFLAGS) $(TOOLCHAIN_CXXFLAGS) -std=c++23 \
+		-ffreestanding -fno-exceptions -fno-rtti -fsyntax-only -x c++ /dev/null
+	@echo "Toolchain OK: $$($(CXX) --version | head -n 1)"
+
+TOOLCHAIN_REPORT := $(BUILD)/toolchain.report
+$(TOOLCHAIN_REPORT): FORCE scripts/build/probe-toolchain.sh
+	$(Q)mkdir -p $(dir $@)
+	$(call if_changed,toolchain_probe)
+
+toolchain-probe: $(TOOLCHAIN_REPORT)
+	@cat $(TOOLCHAIN_REPORT)
+
+check-toolchain: $(TOOLCHAIN_REPORT)
+
+help:
+	@echo "LumeOS build targets:"
+	@echo "  all              Build vmlume.elf and vmlume.bin (default)"
+	@echo "  run              Run the selected image in QEMU"
+	@echo "  debug            Run QEMU with a GDB server on :1234"
+	@echo "  disasm           Generate an interleaved source disassembly"
+	@echo "  info             Show the effective build configuration"
+	@echo "  check-toolchain  Validate compiler, linker, and C++23 support"
+	@echo "  check-image      Validate ELF architecture, symbols, segments, and relocations"
+	@echo "  targets          List registered build targets and dependencies"
+	@echo "  target-info      Explain TARGET=<name>"
+	@echo "  compile_commands Generate an O= scoped compilation database"
+	@echo "  graph            Write the target dependency graph as DOT"
+	@echo "  host-libraries   Build registered native static libraries"
+	@echo "  host-tests       Build and run registered native tests"
+	@echo "  phys-libraries   Build early physical-environment libraries"
+	@echo "  kernel-tests     Build the test-enabled kernel (CONFIG_SELFTEST=y)"
+	@echo "  toolchain-probe  Probe and cache required compiler capabilities"
+	@echo "  clean            Remove only the selected O= output tree"
+	@echo ""
+	@echo "Common options:"
+	@echo "  O=<dir>                 Output directory (default: build)"
+	@echo "  LLVM=1                  Use Clang with GNU ld"
+	@echo "  LLVM=1 LD_TYPE=lld      Use Clang with LLD"
+	@echo "  LLVM_VERSION=<version>  Versioned LLVM tools (default: 20)"
+	@echo "  CROSS_COMPILE=<prefix>  Override GNU cross-tool prefix"
+	@echo "  GCC_TOOLCHAIN=<dir>     GCC installation used by Clang for target headers/builtins"
+	@echo "  V=1                     Print full command lines"
+	@echo "  CONFIG_INITRAMFS_SOURCE=<path>  Select initramfs input"

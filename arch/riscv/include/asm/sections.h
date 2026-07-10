@@ -23,7 +23,7 @@ extern "C" {
 #endif
 
 extern char _start[];
-extern char _end[];
+extern char _kernel_end[];
 
 extern char _stext[];
 extern char _etext[];

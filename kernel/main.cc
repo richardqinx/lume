@@ -82,7 +82,9 @@ void tty_init();          // 15.5. TTY subsystem (console TTY + UART RX IRQ)
 void populate_rootfs();   // 15.6. Unpack embedded initramfs CPIO into ramfs
 
 // Boot self-test runner
+#ifdef CONFIG_SELFTEST
 void selftest_run_all();
+#endif
 
 // AP per-CPU init
 void vmm_init_ap();   // Switch to BSP-built kernel page table
@@ -100,6 +102,7 @@ static void init_thread_func(void *) {
   printk(KERN_INFO "[init] PID 1 started\n");
 
   /* Run post-SMP tests — APs are online by now */
+#ifdef CONFIG_SELFTEST
   extern void selftest_smp();
   kprintf("\n========================================\n");
   kprintf("  Post-SMP Test Suite\n");
@@ -108,6 +111,7 @@ static void init_thread_func(void *) {
   kprintf("========================================\n");
   kprintf("  Post-SMP tests PASSED\n");
   kprintf("========================================\n\n");
+#endif
 
   /*
    * Set up init's own VFS context (like Linux kernel_init).
@@ -326,7 +330,9 @@ extern "C" [[noreturn]] void kernel_main(uint64 cpu_id, uint64 fdt_paddr) {
 
     // 17. Boot self-tests — verify subsystem correctness.
     //     Tests that create kthreads must wait() for them (freeing PIDs).
+#ifdef CONFIG_SELFTEST
     selftest_run_all();
+#endif
 
     // 18. Spawn PID 1 (init) — the first persistent task.
     //     Like Linux's rest_init() → user_mode_thread(kernel_init).

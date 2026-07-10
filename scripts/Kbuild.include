@@ -9,14 +9,7 @@
 #   - Q / KBUILD_VERBOSE        : `make V=1` shows full commands,
 #                                  default V=0 prints a one-line summary
 #   - $(call cmd,<name>)        : echo a quiet summary, then run cmd_<name>
-#   - $(call if_changed,<name>) : currently a thin alias for $(cmd) —
-#                                  no .cmd-file hashing yet (Linux's full
-#                                  if_changed uses fixdep to detect both
-#                                  recipe-text and header changes; LumeOS
-#                                  relies on `-MMD -MP` for headers and
-#                                  on `make clean` for flag changes).
-#   - $(call kbuild-objs,...)   : translate Kbuild-style `obj-y := foo.o`
-#                                  entries into SRCS_C / SRCS_CC.
+#   - $(call if_changed,<name>) : rebuild when inputs or the command change.
 #
 # Naming convention adopted from Linux: each command has both a
 # `quiet_cmd_<name>` (single-line summary) and a `cmd_<name>` (full
@@ -49,11 +42,11 @@ echo-cmd = $(if $($(quiet)cmd_$(1)),echo '  $($(quiet)cmd_$(1))';)
 
 cmd = @$(echo-cmd) $(cmd_$(1))
 
-# if_changed currently degenerates to `cmd` — full Linux semantics
-# require tracking the command-line via per-target .<file>.cmd files
-# and comparing on every rebuild, which needs fixdep.  Until LumeOS
-# grows that infrastructure, `make clean` after editing CFLAGS suffices.
-if_changed = $(cmd)
+# Record a checksum of the exact argv next to each output. FORCE makes Make
+# reconsider the action; run-if-changed executes it only for a changed input or
+# command signature.
+if_changed = @scripts/build/run-if-changed.sh \
+	$(dir $@).$(notdir $@).cmd $@ '$($(quiet)cmd_$(1))' $^ -- $(cmd_$(1))
 
 # --- Standard quiet_cmd_* / cmd_* templates ---------------------------
 #
@@ -61,20 +54,98 @@ if_changed = $(cmd)
 # name via $(call cmd,<name>).  Add new pairs here as new recipe shapes
 # show up (e.g., cmd_lz / cmd_gz / cmd_zstd for compressed Image targets).
 
-   quiet_cmd_cc_o_c   = CC      $<
-         cmd_cc_o_c   = $(CC) $(CFLAGS_LIBC) -c $< -o $@
+   quiet_cmd_cc_o_c   = CC      $(PRIVATE_SOURCE)
+         cmd_cc_o_c   = $(CC) $(CFLAGS_LIBC) $(PRIVATE_INCLUDES) $(PRIVATE_DEFINES) $(PRIVATE_CFLAGS) -c $(PRIVATE_SOURCE) -o $@
 
-   quiet_cmd_cxx_o_cc = CXX     $<
-         cmd_cxx_o_cc = $(CXX) $(CXXFLAGS) -c $< -o $@
+   quiet_cmd_cxx_o_cc = CXX     $(PRIVATE_SOURCE)
+         cmd_cxx_o_cc = $(CXX) $(CXXFLAGS) $(PRIVATE_INCLUDES) $(PRIVATE_DEFINES) $(PRIVATE_CXXFLAGS) -c $(PRIVATE_SOURCE) -o $@
 
-   quiet_cmd_as_o_S   = AS      $<
-         cmd_as_o_S   = $(CC) $(ASFLAGS) -c $< -o $@
+   quiet_cmd_as_o_S   = AS      $(PRIVATE_SOURCE)
+         cmd_as_o_S   = $(CC) $(ASFLAGS) $(PRIVATE_INCLUDES) $(PRIVATE_DEFINES) $(PRIVATE_ASFLAGS) -c $(PRIVATE_SOURCE) -o $@
 
    quiet_cmd_cc_s_c   = CC -S   $<
-         cmd_cc_s_c   = $(CC) $(CFLAGS_LIBC) -S $< -o $@
+         cmd_cc_s_c   = $(CC) $(CFLAGS_LIBC) -S $(PRIVATE_SOURCE) -o $@
+
+   quiet_cmd_gen_asm_offsets = GEN     $@
+         cmd_gen_asm_offsets = scripts/build/generate-asm-offsets.sh $@ \
+                               $(ASM_OFFSETS_S) $(ASM_OFFSETS_SED) $(ASM_OFFSETS_C)
+
+   quiet_cmd_autoconf = GEN     $@
+         cmd_autoconf = scripts/build/generate-autoconf.sh $@ \
+             CONFIG_NR_CPUS $(CONFIG_NR_CPUS) value \
+             CONFIG_HZ $(CONFIG_HZ) value \
+             CONFIG_NR_PRIORITIES $(CONFIG_NR_PRIORITIES) value \
+             CONFIG_DEFAULT_PRIORITY $(CONFIG_DEFAULT_PRIORITY) value \
+             CONFIG_IDLE_PRIORITY $(CONFIG_IDLE_PRIORITY) value \
+             CONFIG_DEFAULT_TIMESLICE $(CONFIG_DEFAULT_TIMESLICE) value \
+             CONFIG_PAGE_SIZE $(CONFIG_PAGE_SIZE) value \
+             CONFIG_MAX_ORDER $(CONFIG_MAX_ORDER) value \
+             CONFIG_KERNEL_STACK_SIZE $(CONFIG_KERNEL_STACK_SIZE) value \
+             CONFIG_KASLR $(CONFIG_KASLR) bool \
+             CONFIG_KASLR_POLICY_ID $(CONFIG_KASLR_POLICY_ID) value \
+             CONFIG_KASLR_LOG_LEVEL $(CONFIG_KASLR_LOG_LEVEL) value \
+             CONFIG_STACK_CANARY $(CONFIG_STACK_CANARY) bool \
+             CONFIG_DEBUG $(CONFIG_DEBUG) bool \
+             CONFIG_DEBUG_LOCKS $(CONFIG_DEBUG_LOCKS) bool \
+             CONFIG_SELFTEST $(CONFIG_SELFTEST) bool \
+             CONFIG_KLOG $(CONFIG_KLOG) bool \
+             CONFIG_KERNEL_COMPRESSED $(CONFIG_KERNEL_COMPRESSED) bool
+
+   quiet_cmd_linker_script = LDS     $@
+         cmd_linker_script = $(CC) -E -P -x c $(INCLUDES) $(PRIVATE_SOURCE) -o $@
+
+   quiet_cmd_initramfs = INITRAMFS $(INITRAMFS_SOURCE)
+         cmd_initramfs = scripts/build/generate-initramfs.sh $(GEN_INIT_CPIO) \
+                         ./scripts/gen_initramfs.sh $@ \
+                         $(CONFIG_INITRAMFS_ROOT_UID) $(CONFIG_INITRAMFS_ROOT_GID) \
+                         $(INITRAMFS_SOURCE)
+
+   quiet_cmd_initramfs_obj = AS      $@ (initramfs)
+         cmd_initramfs_obj = $(CC) $(ASFLAGS) \
+                             -DINITRAMFS_IMAGE='"$(INITRAMFS_CPIO)"' \
+                             -c $(PRIVATE_SOURCE) -o $@
 
    quiet_cmd_objcopy_bin = OBJCOPY $@
          cmd_objcopy_bin = $(OBJCOPY) -O binary $< $@
+
+   quiet_cmd_archive = AR      $@
+         cmd_archive = scripts/build/archive.sh $@ $(AR) $(PRIVATE_ARCHIVE_OBJECTS)
+
+   quiet_cmd_host_tool = HOSTCC  $@
+         cmd_host_tool = $(HOSTCC) $(HOSTCFLAGS) $(PRIVATE_HOST_CFLAGS) \
+                         -o $@ $(PRIVATE_HOST_SOURCE)
+
+   quiet_cmd_host_cc_o_c = HOSTCC  $(PRIVATE_SOURCE)
+         cmd_host_cc_o_c = $(HOSTCC) $(HOSTCFLAGS) -MMD -MP -c $(PRIVATE_SOURCE) -o $@
+
+   quiet_cmd_host_cxx_o_cc = HOSTCXX $(PRIVATE_SOURCE)
+         cmd_host_cxx_o_cc = $(HOSTCXX) $(HOSTCXXFLAGS) -MMD -MP -c $(PRIVATE_SOURCE) -o $@
+
+   quiet_cmd_host_archive = HOSTAR  $@
+         cmd_host_archive = scripts/build/archive.sh $@ $(HOSTAR) $(PRIVATE_ARCHIVE_OBJECTS)
+
+   quiet_cmd_host_link = HOSTLD  $@
+         cmd_host_link = $(HOSTCXX) $(HOSTCXXFLAGS) -o $@ \
+                         $(PRIVATE_HOST_OBJECTS) $(PRIVATE_HOST_LIBS)
+
+   quiet_cmd_toolchain_probe = PROBE   toolchain
+         cmd_toolchain_probe = scripts/build/probe-toolchain.sh $@ \
+             $(CC) $(CXX) $(LD) $(COMPILER_FAMILY) $(TARGET_TRIPLE) \
+             '$(GCC_TOOLCHAIN)' '$(GCC_SYSROOT)'
+
+   quiet_cmd_phys_cc_o_c = PHYSCC  $(PRIVATE_SOURCE)
+         cmd_phys_cc_o_c = $(CC) $(PHYS_CFLAGS) -MMD -MP -c $(PRIVATE_SOURCE) -o $@
+
+   quiet_cmd_phys_cxx_o_cc = PHYSCXX $(PRIVATE_SOURCE)
+         cmd_phys_cxx_o_cc = $(CXX) $(PHYS_CXXFLAGS) -MMD -MP -c $(PRIVATE_SOURCE) -o $@
+
+   quiet_cmd_phys_as_o_S = PHYSAS  $(PRIVATE_SOURCE)
+         cmd_phys_as_o_S = $(CC) $(PHYS_ASFLAGS) -MMD -MP -c $(PRIVATE_SOURCE) -o $@
+
+   quiet_cmd_link_vmlume = LD      $@
+         cmd_link_vmlume = scripts/build/link-kernel.sh $@ $(SIZE) \
+                            $(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ \
+                            $(KERNEL_LINK_INPUTS) $(INITRAMFS_OBJ)
 
 # Objcopy with custom flags via per-target OBJCOPYFLAGS variable —
 # used by the .pi.o post-processing rule (--prefix-symbols=__pi_ etc.).
@@ -83,28 +154,3 @@ if_changed = $(cmd)
 
    quiet_cmd_ld_kernel = LD      $@
          cmd_ld_kernel = $(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $^
-
-# --- kbuild-objs: obj-y -> SRCS_C / SRCS_CC ---------------------------
-#
-# Usage from a subdir Makefile (e.g. arch/riscv/kernel/pi/Makefile):
-#
-#     obj-dir := arch/riscv/kernel/pi
-#     obj-y   := fdt_early.pi.o cmdline_early.pi.o archrandom_early.pi.o
-#     $(eval $(call kbuild-objs,$(obj-dir),$(obj-y:.pi.o=.o)))
-#
-# For each <name>.o entry, looks up <dir>/<name>.cc first, then
-# <dir>/<name>.c, and appends to SRCS_CC / SRCS_C respectively.
-# Pure .pi.o entries should be passed through `:.pi.o=.o` first by the
-# caller so the .pi suffix doesn't confuse the source-file lookup.
-
-define _kbuild-find-src
-$(if $(wildcard $(1)/$(basename $(2)).cc),\
-  $(eval SRCS_CC += $(1)/$(basename $(2)).cc),\
-  $(if $(wildcard $(1)/$(basename $(2)).c),\
-    $(eval SRCS_C += $(1)/$(basename $(2)).c),\
-    $(error kbuild-objs: no $(1)/$(basename $(2)).{c,cc} for obj $(2))))
-endef
-
-define kbuild-objs
-$(foreach _obj,$(2),$(call _kbuild-find-src,$(1),$(_obj)))
-endef

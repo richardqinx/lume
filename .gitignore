@@ -1,4 +1,5 @@
-build/
+/build/
+/out/
 lume-legacy/build/
 *.o
 *.d

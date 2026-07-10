@@ -1,5 +1,5 @@
 build/
-na/build/
+lume-legacy/build/
 *.o
 *.d
 *.elf

@@ -25,13 +25,15 @@
 #include <lume/addr.h>
 #include <lume/config.h>
 #include <lume/fdt.h>
-#include <lume/driver.h>
+#include <lume/platform_device.h>
 #include <lume/irq.h>
 #include <lume/types.h>
 #include <lume/vmm.h>
 
 /* PLIC virtual base (after MMIO mapping) */
 static uint64 plic_va;
+
+extern "C" uint32 bsp_hart_id;
 
 /* PLIC register offsets */
 static constexpr uint64 PLIC_PRIORITY_BASE = 0x000000;
@@ -159,7 +161,8 @@ static void plic_probe(DeviceNode* node) {
   vmm_map_kernel_mmio(plic_pa, 0x4000000);
   plic_va = pa_to_va(phys_addr(plic_pa)).raw;
 
-  uint64 ctx = s_context(0); /* BSP = hart 0 */
+  /* Use the actual BSP hart ID (it may not be hart 0) */
+  uint64 ctx = s_context(bsp_hart_id);
 
   /* Set priority for all sources to 1 (minimum non-zero = enabled) */
   for (uint32 irq = 1; irq < IrqManager::kMaxIrqs; irq++) {
@@ -233,9 +236,24 @@ static const IrqChip plic_chip = {
     plic_set_priority
 };
 
-static void plic_probe_wrapper(DeviceNode* node) {
-    plic_probe(node);
+static int plic_platform_probe(platform_device* pdev) {
+    plic_probe(pdev->of_node);
     g_irq_manager.set_chip(&plic_chip);
+    return 0;
 }
 
-REGISTER_DRIVER("riscv,plic0", plic_probe_wrapper);
+static const of_device_id plic_of_match[] = {
+    { .compatible = "riscv,plic0", .data = nullptr },
+    { .compatible = nullptr,       .data = nullptr },   /* sentinel */
+};
+
+platform_driver plic_driver = {
+    .driver         = { .name = "plic", .bus = nullptr,
+                        .probe = nullptr, .remove = nullptr,
+                        .bus_node = {}, .devices = {} },
+    .probe          = plic_platform_probe,
+    .remove         = nullptr,
+    .of_match_table = plic_of_match,
+};
+
+PLATFORM_DRIVER(plic_driver);

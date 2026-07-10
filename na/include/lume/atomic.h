@@ -51,6 +51,16 @@ public:
         return __atomic_fetch_sub(&val_, delta, order);
     }
 
+    /* Fetch-and-or, returns old value */
+    T fetch_or(T mask, int order = __ATOMIC_ACQ_REL) {
+        return __atomic_fetch_or(&val_, mask, order);
+    }
+
+    /* Fetch-and-and, returns old value */
+    T fetch_and(T mask, int order = __ATOMIC_ACQ_REL) {
+        return __atomic_fetch_and(&val_, mask, order);
+    }
+
     /* Compare-and-swap. Returns true on success. */
     bool compare_exchange(T& expected, T desired,
                           int success_order = __ATOMIC_ACQ_REL,

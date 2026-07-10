@@ -60,6 +60,18 @@ CONFIG_DEBUG_LOCKS      ?= y
 CONFIG_SELFTEST         ?= y
 CONFIG_KLOG             ?= y
 
+# --- Initramfs ------------------------------------------------------
+# Source for the initramfs image.  Accepted forms (auto-detected by
+# scripts/gen_initramfs.sh):
+#   - a listing file (gen_init_cpio format)  → built into a cpio
+#   - a directory                            → packed recursively
+#   - a *.cpio file                          → used as-is
+# Override on the command line or pin in .config:
+#   make all CONFIG_INITRAMFS_SOURCE=/path/to/rootfs
+CONFIG_INITRAMFS_SOURCE   ?= usr/default_cpio_list
+CONFIG_INITRAMFS_ROOT_UID ?= 0
+CONFIG_INITRAMFS_ROOT_GID ?= 0
+
 # ------------------------------------------------------------------
 # §3  Derived constants (computed from CONFIG_ symbols)
 #

@@ -6,12 +6,17 @@
  */
 
 #include <lume/selftest.h>
+#include <lume/klog.h>
+#include <lume/config.h>
 #include <lume/addr.h>
 #include <lume/vmm.h>
 #include <lume/pmm.h>
 #include <arch/config.h>
 
-/* Assuming pmap namespace is accessible or we can test basic structures */
+namespace {
+constexpr uint64 kUartBase = 0x10000000ULL;
+constexpr uint64 kPageOffsetMask = kPageSize - 1;
+}
 
 void selftest_vmm() {
     st_begin("vmm: virtual/physical address translation");
@@ -30,7 +35,7 @@ void selftest_vmm() {
     st_begin("vmm: page alignment macros");
     {
         uint64 base = pmm_get_mem_base().raw;
-        uint64 addr = base + 0xFFF;
+        uint64 addr = base + kPageOffsetMask;
         ST_ASSERT_EQ(page_align_down(addr), base);
         ST_ASSERT_EQ(page_align_up(addr),   base + kPageSize);
         ST_ASSERT_EQ(page_align_down(base), base);
@@ -40,8 +45,10 @@ void selftest_vmm() {
 
     st_begin("vmm: mapping kernel MMIO (driver API)");
     {
-        uint64 mmio_pa = pmm_get_mem_base().raw;
-        vmm_map_kernel_mmio(mmio_pa, 0x1000);
+        /* Use UART MMIO address (0x10000000 on RISC-V virt).
+         * Must NOT use pmm_get_mem_base() — that's PMP-protected firmware. */
+        uint64 mmio_pa = kUartBase;
+        vmm_map_kernel_mmio(mmio_pa, kPageSize);
         
         // Verify it doesn't crash and address is reachable in higher half
         uint64 va = pa_to_va(phys_addr(mmio_pa)).raw;

@@ -15,24 +15,10 @@
 #include <lume/task.h>
 #include <lume/errno.h>
 #include <lume/config.h>
-
-/* Kernel VA base — addresses at or above this are kernel space */
-inline constexpr uint64 kKernelVABase = 0xFFFFFFC000000000ULL;
+#include <lume/mm_layout.h>
 
 extern "C" int __uaccess_memcpy(void* dst, const void* src, uint64 len);
 extern "C" int64 __uaccess_strncpy(char* dst, const char* src, uint64 max_len);
-
-/* Validate that [addr, addr+len) is entirely in user space */
-static bool is_user_range(uint64 addr, uint64 len)
-{
-    if (addr >= kKernelVABase)
-        return false;
-    if (addr + len < addr) /* overflow */
-        return false;
-    if (addr + len > kKernelVABase)
-        return false;
-    return true;
-}
 
 int copy_from_user(void* kernel_dst, uint64 user_src, uint64 len)
 {
@@ -56,9 +42,9 @@ int64 strncpy_from_user(char* kernel_dst, uint64 user_src, uint64 max_len)
     
     /* We must also check that the string does not cross into kernel space. 
        This is safely handled by the assembly routine which will fault if it hits
-       an unmapped page. However, to strictly respect kKernelVABase, we should
-       restrict max_len to the distance to kKernelVABase. */
-    uint64 max_allowed = kKernelVABase - user_src;
+       an unmapped page. However, to strictly respect kKernelVaBase, we should
+       restrict max_len to the distance to kKernelVaBase. */
+    uint64 max_allowed = kKernelVaBase - user_src;
     if (max_len > max_allowed) {
         max_len = max_allowed;
     }

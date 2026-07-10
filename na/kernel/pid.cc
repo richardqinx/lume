@@ -12,8 +12,10 @@ void PidAllocator::init()
 {
     for (int i = 0; i < kBitmapWords; i++)
         bitmap_[i] = 0;
-    next_hint_ = 2;
-    bitmap_[0] |= 0x3ULL; /* Reserve PID 0 (idle) and 1 (init) */
+    next_hint_ = 1;
+    bitmap_[0] |= 0x1ULL; /* Reserve PID 0 (idle/swapper) only.
+                           * PID 1 (init) is allocated normally — the first
+                           * kthread_create() call gets it, matching Linux. */
 }
 
 int32 PidAllocator::alloc()

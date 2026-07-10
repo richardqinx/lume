@@ -10,16 +10,7 @@
 
 #include <lume/compiler.h>
 #include <lume/rbtree_types.h>
-
-/* ------------------------------------------------------------------ */
-/*  Linux-compat macros for freestanding kernel                       */
-/* ------------------------------------------------------------------ */
-
-#ifndef container_of
-#define container_of(ptr, type, member) \
-	reinterpret_cast<type *>( \
-		reinterpret_cast<char *>(ptr) - __builtin_offsetof(type, member))
-#endif
+#include <lume/container_of.h>
 
 /* ------------------------------------------------------------------ */
 /*  Core macros                                                       */

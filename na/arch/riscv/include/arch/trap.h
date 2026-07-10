@@ -79,4 +79,16 @@ static inline uint64 cause_code(uint64 cause) {
     return cause & ~SCAUSE_INTERRUPT;
 }
 
+// Enable Supervisor User Memory access (set SUM bit in sstatus).
+// When SUM=1, S-mode can read/write pages marked PTE_U.
+// This is needed for syscall handlers to access user-space buffers.
+static inline void enable_sum() {
+    __asm__ volatile("csrs sstatus, %0" :: "r"(1UL << 18));
+}
+
+// Disable Supervisor User Memory access (clear SUM bit in sstatus).
+static inline void disable_sum() {
+    __asm__ volatile("csrc sstatus, %0" :: "r"(1UL << 18));
+}
+
 }  // namespace arch::trap

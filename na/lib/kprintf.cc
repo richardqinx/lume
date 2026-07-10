@@ -5,19 +5,42 @@
  * kprintf.cc — Kernel formatted output
  *
  * Uses mpaland/printf's vsnprintf_ as the core formatting engine.
- * All kernel output ultimately goes through this module.
  *
  * Architecture:
  *   vsnprintf_()  ← pure formatting, writes to buffer
  *       ↓
- *   kprintf()     ← format + emit to UART via early_putc
+ *   kprintf()     ← format + emit via console_write_all()
  *   kvprintf()    ← va_list variant
  *   ksnprintf()   ← format into caller's buffer
+ *
+ * Output path:
+ *   Pre-registration:  console_write_all() → early_putc() fallback
+ *   Post-registration: console_write_all() → struct console chain
  */
 
 #include <lume/kprintf.h>
 #include <lume/console.h>
+#include <lume/atomic.h>
+#include <arch/cpu.h>
 #include "printf.h"
+
+/* ------------------------------------------------------------------ */
+/*  Console spinlock (raw, no scheduler dependency — safe in panic)    */
+/* ------------------------------------------------------------------ */
+
+static lume::atomic<uint32> g_console_lock{0};
+
+static inline void console_lock_acquire()
+{
+    while (g_console_lock.exchange(1, __ATOMIC_ACQUIRE) != 0) {
+        /* spin */
+    }
+}
+
+static inline void console_lock_release()
+{
+    g_console_lock.store(0, __ATOMIC_RELEASE);
+}
 
 /* ------------------------------------------------------------------ */
 /*  _putchar: required by mpaland/printf for printf_() / vprintf_()   */
@@ -40,10 +63,10 @@ extern "C" int kprintf(const char* fmt, ...)
     int len = vsnprintf_(buf, sizeof(buf), fmt, va);
     va_end(va);
 
-    /* Emit to console */
-    for (int i = 0; i < len && buf[i] != '\0'; ++i) {
-        early_putc(buf[i]);
-    }
+    /* Emit to console under lock */
+    console_lock_acquire();
+    console_write_all(buf, len);
+    console_lock_release();
     return len;
 }
 
@@ -52,9 +75,9 @@ extern "C" int kvprintf(const char* fmt, va_list va)
     char buf[256];
     int len = vsnprintf_(buf, sizeof(buf), fmt, va);
 
-    for (int i = 0; i < len && buf[i] != '\0'; ++i) {
-        early_putc(buf[i]);
-    }
+    console_lock_acquire();
+    console_write_all(buf, len);
+    console_lock_release();
     return len;
 }
 

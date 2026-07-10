@@ -4,7 +4,7 @@
 # Drivers module
 
 SRCS_CC += drivers/uart.cc
-SRCS_CC += drivers/driver.cc
+SRCS_CC += drivers/console.cc
 
 ifeq ($(ARCH),riscv)
 SRCS_CC += drivers/plic.cc

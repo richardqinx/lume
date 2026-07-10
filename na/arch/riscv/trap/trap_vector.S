@@ -90,13 +90,21 @@ trap_vector:
     /* Step 6: flush TLB after page table switch */
     sfence.vma zero, zero
 
+    /* Step 6.5: restore kernel gp (global pointer).
+     * The compiler uses gp-relative addressing for global variable access
+     * (e.g. ld reg, offset(gp)).  User mode may have set gp to anything,
+     * so we MUST reload it before entering any C++ code. */
+.option push
+.option norelax
+    la gp, __global_pointer$
+.option pop
+
     /* Pass TrapFrame* to C++ handler (a0 = tf) */
     mv a0, tp
 
     /* Set tp = CPU ID (kernel convention) */
     mv tp, t2
 
-    /* Step 7: jump to C++ trap_handler */
     /* Step 7: jump to C++ trap_handler */
     jalr t3
 

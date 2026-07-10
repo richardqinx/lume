@@ -4,30 +4,21 @@
 #pragma once
 
 /*
- * Driver Registration Subsystem
+ * driver.h — boot-time driver probing entry point.
  *
- * Provides a linker-set based registration mechanism for hardware drivers.
- * Drivers define a probe function and register it with the REGISTER_DRIVER macro.
- * During boot, driver_probe_all() scans the Device Tree (FDT) and invokes the
- * probe function for any matching compatible strings.
+ * The actual driver-model primitives (kobject, device, bus_type,
+ * platform_device, platform_driver) live in their own headers:
+ *   <lume/kobject.h>, <lume/device.h>, <lume/platform_device.h>.
  *
- * This decouples the MI kernel initialization from MD driver specifics.
+ * This header just exposes the single boot entry point that
+ * kernel_main() calls after the slab allocator + FDT unflatten are
+ * ready.  The implementation lives in drivers/base/platform.cc.
+ *
+ * Reference: docs/specs/storage_stack.md §4
  */
 
-#include <lume/types.h>
-
-class DeviceNode;
-
-using DriverProbeFunc = void (*)(DeviceNode* node);
-
-struct DriverEntry {
-    const char* compatible;
-    DriverProbeFunc probe;
-};
-
-#define REGISTER_DRIVER(compat_str, probe_fn) \
-    static const DriverEntry __driver_##probe_fn \
-    __attribute__((used, section(".drivers"))) = { compat_str, probe_fn }
-
-/* MI initialization function called from kernel_main() */
+/* Register the platform bus, register every linker-set platform_driver,
+ * walk the FDT, and instantiate a platform_device for each compatible
+ * match.  Each device is bound to its driver via the platform bus
+ * match/probe path.  Returns after all probes have run. */
 void driver_probe_all();

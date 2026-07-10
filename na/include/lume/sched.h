@@ -71,3 +71,32 @@ void sched_dequeue(TaskControlBlock* task);
 /* Convert priority level to time slice length.
  * Higher priority (lower number) → longer time slice. */
 int32 priority_to_timeslice(uint8 priority);
+
+/* ========================================================================
+ * Task Migration & Load Balancing
+ * ======================================================================== */
+
+/*
+ * sched_migrate_task — Move a task from its current CPU to target_cpu.
+ *
+ * The task must NOT be the currently running task. It is dequeued from
+ * its old runqueue and enqueued onto the target. Both runqueue locks
+ * are acquired in cpu_id order to prevent deadlock.
+ *
+ * Returns 0 on success, -EINVAL if task is current or target is invalid.
+ */
+int sched_migrate_task(TaskControlBlock* task, uint8 target_cpu);
+
+/*
+ * sched_balance — Periodic load balancer.
+ *
+ * Called from sched_tick(). Checks if any CPU has significantly more
+ * runnable tasks and pulls work to the local runqueue. This is a
+ * simplified version of Linux's load_balance().
+ */
+void sched_balance();
+
+/*
+ * sched_nr_running — Get the number of runnable tasks on a CPU.
+ */
+uint32 sched_nr_running(uint32 cpu_id);

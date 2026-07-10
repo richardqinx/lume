@@ -15,6 +15,7 @@
  * Reference: docs/specs/trap.md §4
  */
 
+#include <arch/cpu.h>
 #include <lume/trap.h>
 #include <lume/irq.h>
 #include <lume/console.h>
@@ -26,8 +27,11 @@
 #include <lume/syscall.h>
 #include <lume/task.h>
 #include <lume/vmm.h>
+#include <lume/signal.h>
 #include <lume/signal_nr.h>
+#include <lume/smp.h>
 #include <arch/trapframe.h>  /* TrapFrame: cross-layer data contract */
+#include <arch/extable.h>    /* search_extable: kernel fault recovery */
 
 /* ========================================================================
  * trap_handle() — MI-layer dispatcher for traps
@@ -39,22 +43,18 @@ static TrapStats g_trap_stats = {};
 
 static uint32 trap_cause_index(TrapCause cause)
 {
-    switch (cause) {
-    case TrapCause::PageFaultLoad:  return 0;
-    case TrapCause::PageFaultStore: return 1;
-    case TrapCause::PageFaultExec:  return 2;
-    case TrapCause::Syscall:        return 3;
-    case TrapCause::IllegalInst:    return 4;
-    case TrapCause::Breakpoint:     return 5;
-    case TrapCause::AccessFault:    return 6;
-    case TrapCause::AlignFault:     return 7;
-    case TrapCause::IrqTimer:       return 8;
-    case TrapCause::IrqSoftware:    return 9;
-    case TrapCause::IrqExternal:    return 10;
-    case TrapCause::Unknown:
-    default:
-        return 11;
+    uint32 raw = static_cast<uint32>(cause);
+
+    /* Exceptions 0-7 map directly to indices 0-7 */
+    if (raw <= 7) {
+        return raw;
     }
+    /* IRQs 16-18 map to indices 8-10 */
+    if (raw >= 16 && raw <= 18) {
+        return raw - 16 + 8;
+    }
+    /* Unknown / out-of-range */
+    return 11;
 }
 
 static void trap_record(const TrapInfo& info)
@@ -100,10 +100,33 @@ void trap_handle(arch::TrapFrame* tf, const TrapInfo& info)
 {
     trap_record(info);
 
+    /* ---- Kernel exception handling ----
+     * Interrupts are always allowed through. For exceptions:
+     * - Page faults: handled in the switch below (extable fixup path)
+     * - Other exceptions: try extable, then panic.
+     *
+     * This replaces the old blanket kernel_panic, enabling
+     * copy_from_user/copy_to_user to safely fault on user pages. */
     if (info.origin == TrapOrigin::FromKernel &&
         info.cls != TrapClass::Interrupt) {
-        kprintf("[trap] kernel exception\n");
-        kernel_panic("kernel exception");
+
+        /* Page faults are dispatched in the switch — let them through */
+        bool is_page_fault =
+            (info.cause == TrapCause::PageFaultLoad ||
+             info.cause == TrapCause::PageFaultStore ||
+             info.cause == TrapCause::PageFaultExec);
+
+        if (!is_page_fault) {
+            /* Non-page-fault kernel exception: try extable fixup */
+            uint64 fixup = search_extable(info.epc);
+            if (fixup != 0) {
+                tf->epc = fixup;
+                return;
+            }
+            kprintf("[trap] fatal kernel exception: cause=%u epc=0x%llx val=0x%llx\n",
+                    static_cast<unsigned>(info.cause), info.epc, info.val);
+            kernel_panic("unrecoverable kernel exception");
+        }
     }
 
     switch (info.cause) {
@@ -120,17 +143,43 @@ void trap_handle(arch::TrapFrame* tf, const TrapInfo& info)
             int ret = vmm_handle_page_fault(curr->mm, info.val,
                                             vm_fault_cause_from_trap(info.cause));
             if (ret == -EFAULT) {
-                task_kill_current(SIGSEGV);
+                kprintf("[trap] user SIGSEGV (MAPERR) epc=0x%llx addr=0x%llx\n",
+                        info.epc, info.val);
+                force_sig_fault(SIGSEGV, 1 /* SEGV_MAPERR */, info.val);
             } else if (ret == -ENOMEM) {
-                task_kill_current(SIGKILL);
+                kprintf("[trap] user SIGKILL (OOM) epc=0x%llx addr=0x%llx\n",
+                        info.epc, info.val);
+                force_sig_fault(SIGKILL, 0, info.val);
             } else if (ret < 0) {
-                task_kill_current(SIGSEGV);
+                kprintf("[trap] user SIGSEGV (ACCERR) epc=0x%llx addr=0x%llx\n",
+                        info.epc, info.val);
+                force_sig_fault(SIGSEGV, 2 /* SEGV_ACCERR */, info.val);
             }
             break;
         }
 
-        kprintf("[trap] kernel page fault\n");
-        kernel_panic("unhandled page fault");
+        /* Kernel page fault — try exception table fixup.
+         * This is the path used by copy_from_user/copy_to_user when
+         * accessing unmapped or faulting user addresses from S-mode. */
+        {
+            uint64 fixup = search_extable(info.epc);
+            if (fixup != 0) {
+                tf->epc = fixup;
+                break;
+            }
+        }
+        kprintf("[trap] kernel page fault: epc=0x%llx addr=0x%llx\n",
+                info.epc, info.val);
+        {
+            TaskControlBlock* curr = current_task();
+            if (curr) {
+                kprintf("[trap] pid=%d state=%d\n",
+                        curr->pid, static_cast<int>(curr->state));
+                kprintf("[trap] tf->epc=%llx tf->ra=%llx tf->sp=%llx\n",
+                        tf->epc, tf->ra, tf->sp);
+            }
+        }
+        kernel_panic("unhandled kernel page fault (no extable entry)");
         break;
 
     /* ---- System Call ---- */
@@ -155,14 +204,20 @@ void trap_handle(arch::TrapFrame* tf, const TrapInfo& info)
     }
 
     case TrapCause::IrqSoftware:
-        /* IPI handling — Phase 2 stub */
+        /* S-mode software interrupt = IPI from another hart */
+        smp_handle_ipi();
         break;
 
     /* ---- Fatal exceptions ---- */
     case TrapCause::IllegalInst:
-        kprintf("[trap] illegal instruction\n");
-        /* Phase 2: panic. Phase 3: task_kill(SIGILL) */
-        kernel_panic("illegal instruction in user mode");
+        if (info.origin == TrapOrigin::FromUser) {
+            kprintf("[trap] user illegal instruction at epc=0x%llx stval=0x%llx\n",
+                    info.epc, info.val);
+            force_sig_fault(SIGILL, 1 /* ILL_ILLOPC */, info.epc);
+        } else {
+            kprintf("[trap] illegal instruction at epc=0x%llx\n", info.epc);
+            kernel_panic("illegal instruction in kernel mode");
+        }
         break;
 
     case TrapCause::AccessFault:
@@ -187,8 +242,17 @@ void trap_handle(arch::TrapFrame* tf, const TrapInfo& info)
         break;
     }
 
-    /* Check if rescheduling is needed before returning to user mode */
+    /* Process pending signals before returning to user mode */
     if (info.origin == TrapOrigin::FromUser) {
+        do_signal(tf);
+    }
+
+    /* Preemption check on return from any interrupt.
+     * This is the kernel's equivalent of Linux's retint_kernel path:
+     * if a timer tick (or IPI) set need_resched, we must call schedule()
+     * before returning — otherwise the idle loop never yields to
+     * runnable tasks like PID 1. */
+    if (info.cls == TrapClass::Interrupt) {
         sched_check_preempt();
     }
 }

@@ -35,6 +35,11 @@ inline constexpr uint64 kVmemmapBaseDefault   = 0xFFFFFFD000000000ULL;
 /* Physical memory base (where RAM starts on RISC-V virt platform) */
 inline constexpr uint64 kPhysBase = 0x80000000ULL;
 
+/* Kernel physical load address (= PHYS_BASE in linker script).
+ * Everything in [kPhysBase, kPhysStart) is firmware territory (PMP-protected).
+ * Analogous to Linux's CONFIG_PHYSICAL_START. */
+inline constexpr uint64 kPhysStart = 0x80200000ULL;
+
 /* ================================================================
  * Runtime (post-KASLR) virtual addresses
  *

@@ -76,4 +76,20 @@ static inline void timer_intr_off() {
     __asm__ volatile("csrc sie, %0" :: "r"(SIE_STIE));
 }
 
+// Enable software interrupt in sie (sie.SSIE = 1) — needed for IPI
+static inline void software_intr_on() {
+    __asm__ volatile("csrs sie, %0" :: "r"(SIE_SSIE));
+}
+
+// Enable external interrupt in sie (sie.SEIE = 1) — needed for PLIC (UART, etc.)
+static inline void external_intr_on() {
+    __asm__ volatile("csrs sie, %0" :: "r"(SIE_SEIE));
+}
+
+// Clear S-mode software interrupt pending bit (sip.SSIP = 0)
+// Must be called in the IPI handler to acknowledge the interrupt.
+static inline void clear_sip_ssip() {
+    __asm__ volatile("csrc sip, %0" :: "r"(1UL << 1));
+}
+
 }  // namespace arch::cpu

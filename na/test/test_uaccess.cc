@@ -7,13 +7,13 @@
 
 #include <lume/vmm.h>
 #include <lume/pmm.h>
+#include <lume/tlb.h>
+#include <lume/mm_layout.h>
 #include <arch/pmap.h>
-
-constexpr uint64 kKernelVABase = 0xFFFFFFC000000000ULL;
 
 void selftest_uaccess()
 {
-    /* To test valid user addresses (< kKernelVABase), we need a writable page mapped there.
+    /* To test valid user addresses (< kKernelVaBase), we need a writable page mapped there.
      * We cannot use VmSpace::create() because it does not yet inherit kernel mappings, 
      * so switching to it hangs. We also cannot map it with the U bit because S-mode 
      * would need the SUM bit enabled.
@@ -33,7 +33,7 @@ void selftest_uaccess()
     pmap::map(root_pa, mock_user_addr, paddr, pmap::PTE_R | pmap::PTE_W | pmap::PTE_V | pmap::PTE_A | pmap::PTE_D);
     
     /* Flush TLB to see the new mapping */
-    asm volatile("sfence.vma" : : : "memory");
+    tlb_shootdown_all();
 
     st_begin("uaccess: copy_to_user valid range");
     char kernel_buf[32] = "Hello User Space!";
@@ -67,12 +67,12 @@ void selftest_uaccess()
     st_pass();
 
     st_begin("uaccess: copy_to_user invalid range (crosses boundary)");
-    ret = copy_to_user(kKernelVABase - 10, kernel_buf, 20);
+    ret = copy_to_user(kKernelVaBase - 10, kernel_buf, 20);
     ST_ASSERT_EQ(ret, -EFAULT);
     st_pass();
 
     st_begin("uaccess: copy_to_user invalid range (entirely in kernel)");
-    ret = copy_to_user(kKernelVABase + 0x1000, kernel_buf, 20);
+    ret = copy_to_user(kKernelVaBase + 0x1000, kernel_buf, 20);
     ST_ASSERT_EQ(ret, -EFAULT);
     st_pass();
 
@@ -82,15 +82,15 @@ void selftest_uaccess()
     st_pass();
 
     st_begin("uaccess: copy_from_user invalid ranges");
-    ret = copy_from_user(read_buf, kKernelVABase - 5, 10);
+    ret = copy_from_user(read_buf, kKernelVaBase - 5, 10);
     ST_ASSERT_EQ(ret, -EFAULT);
     
-    ret = copy_from_user(read_buf, kKernelVABase, 10);
+    ret = copy_from_user(read_buf, kKernelVaBase, 10);
     ST_ASSERT_EQ(ret, -EFAULT);
     st_pass();
 
     st_begin("uaccess: strncpy_from_user invalid range");
-    uint64 invalid_addr = kKernelVABase + 0x1000;
+    uint64 invalid_addr = kKernelVaBase + 0x1000;
     len = strncpy_from_user(str_buf, invalid_addr, 10);
     ST_ASSERT_EQ(len, -EFAULT);
     st_pass();

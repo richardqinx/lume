@@ -37,7 +37,7 @@
 #endif
 
 #ifndef CONFIG_KERNEL_STACK_SIZE
-#define CONFIG_KERNEL_STACK_SIZE 8192
+#define CONFIG_KERNEL_STACK_SIZE 16384
 #endif
 
 #ifndef CONFIG_HZ
@@ -86,8 +86,15 @@ inline constexpr int kMaxCpus = CONFIG_NR_CPUS;
 /* Virtual memory page size (4KB, matching SV39 base page). */
 inline constexpr uint64 kPageSize = CONFIG_PAGE_SIZE;
 
+/* Page shift: log2(kPageSize). Used for PFN ↔ PA conversions. */
+inline constexpr int kPageShift = 12;  // 4096 = 1 << 12
+
 /* KASLR policy ID and logging level (build-time configurable) */
 inline constexpr uint32 kKaslrPolicyId = CONFIG_KASLR_POLICY_ID;
 inline constexpr int kKaslrLogLevel = CONFIG_KASLR_LOG_LEVEL;
+
+#include <arch/config.h>
+
+using arch::kPhysStart;
 
 #endif /* __ASSEMBLER__ */

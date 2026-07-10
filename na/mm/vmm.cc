@@ -18,6 +18,7 @@
 #include <arch/config.h>
 #include <arch/mmu.h>
 #include <arch/pmap.h>
+#include <lume/tlb.h>
 #include <lume/addr.h>
 #include <lume/console.h>
 #include <lume/fdt.h>
@@ -28,6 +29,7 @@
 #include <lume/pmm.h>
 #include <lume/types.h>
 #include <lume/vmm.h>
+#include <lume/config.h>
 
 /* Linker-exported section boundaries (virtual addresses) */
 extern "C" char _stext[], _etext[];
@@ -36,25 +38,23 @@ extern "C" char _sdata[], _edata[];
 extern "C" char _sbss[], _ebss[];
 extern "C" char _kernel_end[];
 
-/* Global kernel page table root PA */
-static uint64 g_kernel_pgtbl = 0;
+/* Global kernel page table root PA — external linkage for task_exit */
+uint64 g_kernel_pgtbl = 0;
+
+namespace {
 
 /* VMM exports for PMM: page_map location after vmemmap mapping. */
-static uint64 g_vmemmap_page_map_pa = 0;
-static uint64 g_vmemmap_page_map_size = 0;
-static uint64 g_vmemmap_num_pages = 0;
-
-uint64 vmm_get_page_map_pa() { return g_vmemmap_page_map_pa; }
-uint64 vmm_get_page_map_size() { return g_vmemmap_page_map_size; }
-uint64 vmm_get_num_pages() { return g_vmemmap_num_pages; }
+uint64 g_vmemmap_page_map_pa = 0;
+uint64 g_vmemmap_page_map_size = 0;
+uint64 g_vmemmap_num_pages = 0;
 
 /* Convert a linker symbol to PA (kernel is executing in higher-half VA). */
-static inline uint64 sym_to_pa(const void *sym) {
+inline uint64 sym_to_pa(const void *sym) {
   return boot_va_to_pa(virt_addr(reinterpret_cast<uint64>(sym))).raw;
 }
 
 /* Map a PA range into the kernel page table via the direct map. */
-static void map_range(uint64 root, uint64 pa_start, uint64 pa_end,
+void map_range(uint64 root, uint64 pa_start, uint64 pa_end,
                       uint64 perm) {
   for (uint64 pa = pa_start; pa < pa_end; pa += kPageSize) {
     uint64 va = pa_to_va(phys_addr(pa)).raw;
@@ -66,7 +66,7 @@ static void map_range(uint64 root, uint64 pa_start, uint64 pa_end,
 }
 
 /* Map a PA range into the kernel page table at the fixed linked VA. */
-static void map_range_linked(uint64 root, uint64 pa_start, uint64 pa_end,
+void map_range_linked(uint64 root, uint64 pa_start, uint64 pa_end,
                              uint64 perm) {
   for (uint64 pa = pa_start; pa < pa_end; pa += kPageSize) {
     uint64 va = boot_pa_to_va(phys_addr(pa)).raw;
@@ -78,7 +78,7 @@ static void map_range_linked(uint64 root, uint64 pa_start, uint64 pa_end,
 }
 
 /* Map a PA range to an explicit VA base, using 2MB pages where possible. */
-static void map_range_at_huge(uint64 root, uint64 va_base, uint64 pa_start,
+void map_range_at_huge(uint64 root, uint64 va_base, uint64 pa_start,
                               uint64 pa_end, uint64 perm) {
   constexpr uint64 k2MB = 2ULL * 1024 * 1024;
   uint64 pa = pa_start;
@@ -109,6 +109,12 @@ static void map_range_at_huge(uint64 root, uint64 va_base, uint64 pa_start,
   }
 }
 
+} // namespace
+
+uint64 vmm_get_page_map_pa() { return g_vmemmap_page_map_pa; }
+uint64 vmm_get_page_map_size() { return g_vmemmap_page_map_size; }
+uint64 vmm_get_num_pages() { return g_vmemmap_num_pages; }
+
 void vmm_init() {
   /* 1. Allocate new root page table (from memblock) */
   uint64 root = pmap::create();
@@ -137,17 +143,36 @@ void vmm_init() {
    */
   map_range_linked(root, text_start, text_end, pmap::PTE_R | pmap::PTE_X);
 
-  /* 4. Map .rodata (R) at fixed linked VA */
-  map_range_linked(root, ro_start, ro_end, pmap::PTE_R);
+  /* 4. Map .rodata (R) at fixed linked VA.
+   * We map [_srodata, _sdata) so that the .lume.reloc section (which
+   * sits in its own padded output section between _erodata and _sdata)
+   * is also covered.  Relocator only reads it during early boot, but
+   * mapping it keeps post-vmm accesses to __lume_reloc_* symbols sane. */
+  map_range_linked(root, ro_start, page_align_down(sym_to_pa(_sdata)),
+                   pmap::PTE_R);
 
   /* 5. Map .data + .bss (RW) at fixed linked VA */
   map_range_linked(root, data_start, bss_end, pmap::PTE_R | pmap::PTE_W);
 
-  /* 6. Map remaining physical memory after kernel (RW) */
-  uint64 after_kernel = page_align_up(sym_to_pa(_kernel_end));
-  if (after_kernel < mem_end) {
-    map_range(root, after_kernel, mem_end, pmap::PTE_R | pmap::PTE_W);
+  /* 6. Map usable physical RAM into the KASLR-slid direct map.
+   *
+   * The direct map provides pa_to_va() / va_to_pa() for the physical
+   * address space.  We map from kPhysStart (the kernel's linked load
+   * address), skipping [mem_base, kPhysStart) because that region is
+   * PMP-protected firmware (OpenSBI) — S-mode cannot access it.
+   *
+   * Linux does the same on RISC-V: the linear map covers only the
+   * usable RAM range, not firmware-reserved regions.
+   *
+   * Uses 2MB huge pages for efficiency (64 entries for 128MB vs 32K).
+   */
+  uint64 dm_start = kPhysStart;
+  if (dm_start < mem_base) {
+    dm_start = mem_base;
   }
+  uint64 dm_va_base = pa_to_va(phys_addr(dm_start)).raw;
+  map_range_at_huge(root, dm_va_base, dm_start, mem_end,
+                    pmap::PTE_R | pmap::PTE_W);
 
   /* 7. Allocate page_map from memblock (top of RAM) and map at VMEMMAP.
    *
@@ -206,5 +231,5 @@ void vmm_map_kernel_mmio(uint64 pa, uint64 size) {
 
   map_range(g_kernel_pgtbl, aligned_pa, aligned_pa + aligned_size,
             pmap::PTE_R | pmap::PTE_W | pmap::PTE_G);
-  arch::mmu::flush_tlb_all();
+  tlb_shootdown_all();
 }

@@ -50,6 +50,14 @@ static inline uint64 get_page_table() {
     return (satp_val & SATP_PPN_MASK) << 12;
 }
 
+// Read the raw satp CSR value (mode + PPN).
+// Used when the caller needs the exact register value (e.g. for TrapFrame metadata).
+static inline uint64 read_satp() {
+    uint64 val;
+    __asm__ volatile("csrr %0, satp" : "=r"(val));
+    return val;
+}
+
 // Flush the entire TLB (all ASIDs, all addresses)
 static inline void flush_tlb_all() {
     __asm__ volatile("sfence.vma zero, zero" ::: "memory");
@@ -58,6 +66,13 @@ static inline void flush_tlb_all() {
 // Flush a single TLB entry for the given virtual address
 static inline void flush_tlb_page(uint64 vaddr) {
     __asm__ volatile("sfence.vma %0, zero" :: "r"(vaddr) : "memory");
+}
+
+// Flush the instruction cache.
+// Required after loading executable code into memory (e.g. ELF loading).
+// sfence.vma only flushes the TLB; fence.i is needed for the I-cache.
+static inline void flush_icache() {
+    __asm__ volatile("fence.i" ::: "memory");
 }
 
 }  // namespace arch::mmu

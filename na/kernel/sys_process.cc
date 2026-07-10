@@ -11,6 +11,7 @@
  * Reference: docs/specs/syscall.md §7.1
  */
 
+#include "lume/klog.h"
 #include <lume/types.h>
 #include <lume/task.h>
 #include <lume/sched.h>
@@ -20,8 +21,10 @@
 
 /* External: task lifecycle (kernel/task.cc) */
 extern void task_exit(int code);
-extern void task_destroy(TaskControlBlock* task);
-extern int32 task_wait(int32* exit_code);
+extern int32 do_wait4(int32 wait_pid, int options, int32* exit_code);
+extern int32 task_clone(arch::TrapFrame* tf, uint64 clone_flags,
+                        uint64 child_stack, uint64 parent_tidptr,
+                        uint64 child_tidptr, uint64 tls);
 extern int32 task_fork(arch::TrapFrame* tf);
 
 /* ======================================================================
@@ -75,14 +78,10 @@ int64 sys_sched_yield_wrapper(uint64, uint64, uint64, uint64, uint64, uint64)
 int64 sys_clone_wrapper(uint64 flags, uint64 child_stack,
                         uint64 ptid, uint64 ctid, uint64 tls, uint64)
 {
-    /* Phase A: Simple fork() support.
-     * Ignore flags/stack for now and just clone the current task. */
-    (void)flags; (void)child_stack; (void)ptid; (void)ctid; (void)tls;
-
     arch::TrapFrame* tf = current_task()->trapframe;
     if (!tf) return -EINVAL;
 
-    return task_fork(tf);
+    return task_clone(tf, flags, child_stack, ptid, ctid, tls);
 }
 
 /* ========================================================================
@@ -92,23 +91,16 @@ int64 sys_clone_wrapper(uint64 flags, uint64 child_stack,
 int64 sys_wait4_wrapper(uint64 pid, uint64 wstatus_ptr,
                         uint64 options, uint64, uint64, uint64)
 {
-    /* Phase A: Basic wait() support.
-     * TODO: Implement pid-specific wait and WNOHANG in task_wait. */
-    (void)pid; (void)options;
-
     int32 exit_code = 0;
-    int32 child_pid = task_wait(&exit_code);
+    int32 child_pid = do_wait4(static_cast<int32>(pid),
+                               static_cast<int>(options),
+                               &exit_code);
 
     if (child_pid < 0) return child_pid;
 
+    /* exit_code is already in Linux wstatus format */
     if (wstatus_ptr != 0) {
-        int wstatus = 0;
-        if (exit_code & kExitCodeSignalFlag) {
-            wstatus = exit_code & 0x7F;
-        } else {
-            wstatus = W_EXITCODE(exit_code);
-        }
-        if (copy_to_user(wstatus_ptr, &wstatus, sizeof(int)) < 0)
+        if (copy_to_user(wstatus_ptr, &exit_code, sizeof(int)) < 0)
             return -EFAULT;
     }
 
@@ -122,9 +114,9 @@ int64 sys_wait4_wrapper(uint64 pid, uint64 wstatus_ptr,
 int64 sys_set_tid_address(uint64 tidptr, uint64, uint64,
                           uint64, uint64, uint64)
 {
-    /* Phase 2: store the clear_child_tid pointer (needed for futex wakeup).
-     * For now just return current tid. */
-    (void)tidptr;
+    /* Store clear_child_tid pointer — on exit, kernel writes 0 here
+     * and does futex_wake (enables pthread_join). */
+    current_task()->clear_child_tid = tidptr;
     return current_task()->pid;
 }
 
@@ -140,4 +132,54 @@ int64 sys_getuid(uint64, uint64, uint64, uint64, uint64, uint64)
 int64 sys_getgid(uint64, uint64, uint64, uint64, uint64, uint64)
 {
     return 0; /* root */
+}
+
+/* ======================================================================
+ * sys_nanosleep (SYS_nanosleep = 101)
+ * ====================================================================== */
+#include <lume/wait.h>
+#include <lume/kprintf.h>
+#include <lume/timer.h>
+
+struct linux_timespec {
+    int64 tv_sec;
+    int64 tv_nsec;
+};
+
+static void nanosleep_wakeup(TimerList* t) {
+    TaskControlBlock* task = static_cast<TaskControlBlock*>(t->data);
+    task->state = TaskState::Runnable;
+    sched_enqueue(task);
+}
+
+int64 sys_nanosleep(uint64 req_ptr, uint64 rem_ptr, uint64, uint64, uint64, uint64) {
+    if (req_ptr == 0) return -EINVAL;
+
+    linux_timespec req;
+    if (copy_from_user(&req, req_ptr, sizeof(req)) != 0) {
+        return -EFAULT;
+    }
+
+    uint64 target = *(volatile uint64*)&g_jiffies + (req.tv_sec * 100) + (req.tv_nsec / 10000000);
+    
+    TaskControlBlock* curr = current_task();
+    curr->state = TaskState::Sleeping;
+    
+    TimerList t;
+    t.init(nanosleep_wakeup);
+    t.expires = target;
+    t.data = curr;
+    
+    add_timer(&t);
+    
+    if (*(volatile uint64*)&g_jiffies < target) {
+        schedule();
+    } else {
+        curr->state = TaskState::Running;
+    }
+    
+    
+    del_timer(&t);
+
+    return 0;
 }

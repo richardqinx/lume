@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Richard Qin
+#
+# scripts/Kbuild.include — shared Make helpers for LumeOS.
+#
+# Mirrors a small, useful subset of Linux's scripts/Kbuild.include.
+# Provides:
+#
+#   - Q / KBUILD_VERBOSE        : `make V=1` shows full commands,
+#                                  default V=0 prints a one-line summary
+#   - $(call cmd,<name>)        : echo a quiet summary, then run cmd_<name>
+#   - $(call if_changed,<name>) : currently a thin alias for $(cmd) —
+#                                  no .cmd-file hashing yet (Linux's full
+#                                  if_changed uses fixdep to detect both
+#                                  recipe-text and header changes; LumeOS
+#                                  relies on `-MMD -MP` for headers and
+#                                  on `make clean` for flag changes).
+#   - $(call kbuild-objs,...)   : translate Kbuild-style `obj-y := foo.o`
+#                                  entries into SRCS_C / SRCS_CC.
+#
+# Naming convention adopted from Linux: each command has both a
+# `quiet_cmd_<name>` (single-line summary) and a `cmd_<name>` (full
+# command line).  $(quiet) selects which prefix to display:
+#   V=0  ->  quiet := quiet_   ->  echoes "  CC  foo.c"
+#   V=1  ->  quiet :=          ->  echoes the full $(CC) $(CFLAGS) ...
+# ----------------------------------------------------------------------
+
+# --- Verbosity ---------------------------------------------------------
+# Override at the command line: `make V=1`.  Default V=0 = quiet.
+KBUILD_VERBOSE ?= $(V)
+KBUILD_VERBOSE ?= 0
+
+ifeq ($(KBUILD_VERBOSE),1)
+    Q :=
+    quiet :=
+else
+    Q := @
+    quiet := quiet_
+endif
+
+# --- echo-cmd / cmd / if_changed ---------------------------------------
+#
+# echo-cmd prints the recipe's one-line summary (when quiet) or its full
+# command line (when verbose).  Implementation uses $($(quiet)cmd_<name>)
+# so the right form is picked up automatically.
+#
+# cmd is the workhorse: print summary, then execute the real command.
+echo-cmd = $(if $($(quiet)cmd_$(1)),echo '  $($(quiet)cmd_$(1))';)
+
+cmd = @$(echo-cmd) $(cmd_$(1))
+
+# if_changed currently degenerates to `cmd` — full Linux semantics
+# require tracking the command-line via per-target .<file>.cmd files
+# and comparing on every rebuild, which needs fixdep.  Until LumeOS
+# grows that infrastructure, `make clean` after editing CFLAGS suffices.
+if_changed = $(cmd)
+
+# --- Standard quiet_cmd_* / cmd_* templates ---------------------------
+#
+# Subdir Makefiles and the top-level Makefile can reference these by
+# name via $(call cmd,<name>).  Add new pairs here as new recipe shapes
+# show up (e.g., cmd_lz / cmd_gz / cmd_zstd for compressed Image targets).
+
+   quiet_cmd_cc_o_c   = CC      $<
+         cmd_cc_o_c   = $(CC) $(CFLAGS_LIBC) -c $< -o $@
+
+   quiet_cmd_cxx_o_cc = CXX     $<
+         cmd_cxx_o_cc = $(CXX) $(CXXFLAGS) -c $< -o $@
+
+   quiet_cmd_as_o_S   = AS      $<
+         cmd_as_o_S   = $(CC) $(ASFLAGS) -c $< -o $@
+
+   quiet_cmd_cc_s_c   = CC -S   $<
+         cmd_cc_s_c   = $(CC) $(CFLAGS_LIBC) -S $< -o $@
+
+   quiet_cmd_objcopy_bin = OBJCOPY $@
+         cmd_objcopy_bin = $(OBJCOPY) -O binary $< $@
+
+# Objcopy with custom flags via per-target OBJCOPYFLAGS variable —
+# used by the .pi.o post-processing rule (--prefix-symbols=__pi_ etc.).
+   quiet_cmd_objcopy  = OBJCOPY $@
+         cmd_objcopy  = $(OBJCOPY) $(OBJCOPYFLAGS) $< $@
+
+   quiet_cmd_ld_kernel = LD      $@
+         cmd_ld_kernel = $(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $^
+
+# --- kbuild-objs: obj-y -> SRCS_C / SRCS_CC ---------------------------
+#
+# Usage from a subdir Makefile (e.g. arch/riscv/kernel/pi/Makefile):
+#
+#     obj-dir := arch/riscv/kernel/pi
+#     obj-y   := fdt_early.pi.o cmdline_early.pi.o archrandom_early.pi.o
+#     $(eval $(call kbuild-objs,$(obj-dir),$(obj-y:.pi.o=.o)))
+#
+# For each <name>.o entry, looks up <dir>/<name>.cc first, then
+# <dir>/<name>.c, and appends to SRCS_CC / SRCS_C respectively.
+# Pure .pi.o entries should be passed through `:.pi.o=.o` first by the
+# caller so the .pi suffix doesn't confuse the source-file lookup.
+
+define _kbuild-find-src
+$(if $(wildcard $(1)/$(basename $(2)).cc),\
+  $(eval SRCS_CC += $(1)/$(basename $(2)).cc),\
+  $(if $(wildcard $(1)/$(basename $(2)).c),\
+    $(eval SRCS_C += $(1)/$(basename $(2)).c),\
+    $(error kbuild-objs: no $(1)/$(basename $(2)).{c,cc} for obj $(2))))
+endef
+
+define kbuild-objs
+$(foreach _obj,$(2),$(call _kbuild-find-src,$(1),$(_obj)))
+endef

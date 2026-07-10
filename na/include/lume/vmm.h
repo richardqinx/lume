@@ -13,6 +13,7 @@
 
 #include <lume/types.h>
 #include <lume/rbtree.h>
+#include <lume/atomic.h>
 #include <kernel/sync/spinlock.h>
 
 /* ------------------------------------------------------------------ */
@@ -61,14 +62,25 @@ struct VmSpace {
     uint64 root_pa;         // SV39 root page table physical address
     struct rb_root vma_tree; // Red-black tree of VmAreaStructs
     Spinlock lock;          // Protects vma_tree mutations
+    lume::atomic<int32> refcount; // Reference count (for CLONE_VM sharing)
+    lume::atomic<uint64> cpu_mask; // Bitmask of CPUs with this mm in satp
 
     uint64 brk_start;        // Start of heap (page-aligned)
     uint64 brk_end;          // Current heap end (page-aligned)
+    uint64 mmap_base;        // Base for mmap (Linux: TASK_UNMAPPED_BASE = TASK_SIZE/3)
     
-    // Create a brand new VmSpace (allocates root pagetable)
+    // Create a brand new VmSpace (allocates root pagetable, refcount=1)
     static VmSpace* create();
     
-    // Destroy VmSpace, unmapping all VMAs and freeing pagetables
+    // Increment reference count (for CLONE_VM)
+    void incref();
+
+    // Decrement reference count; destroys VmSpace when it reaches 0.
+    // Call this instead of destroy() directly.
+    void put();
+
+    // Destroy VmSpace, unmapping all VMAs and freeing pagetables.
+    // Internal — called by put() when refcount drops to 0.
     void destroy();
 };
 

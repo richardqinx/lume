@@ -43,16 +43,25 @@ struct PerCpuCache {
 /*  Module-private state                                              */
 /* ------------------------------------------------------------------ */
 
-static Spinlock g_pmm_lock;
-static list_node g_free_areas[kMaxOrder]; // Buddy free lists [0..10]
-static PerCpuCache g_pcp[kMaxCpus];
+namespace {
 
-static Page *g_page_map = nullptr; // Flat array of Page descriptors
-static uint64 g_page_map_pa = 0;   // Physical base of page_map storage
-static uint64 g_page_map_bytes = 0; // Byte size of page_map storage
-static uint64 g_mem_base = 0;        // Physical memory base (from FDT)
-static uint64 g_mem_size = 0;        // Total physical memory size
-static uint64 g_num_pages = 0;       // Total managed pages
+/* PCP Cache tuning parameters */
+constexpr uint32 kPcpBatchDivisor = 1024;
+constexpr uint32 kPcpMinBatchSize = 16;
+constexpr uint64 kMB = 1024ULL * 1024ULL;
+
+Spinlock g_pmm_lock;
+list_node g_free_areas[kMaxOrder]; // Buddy free lists [0..10]
+PerCpuCache g_pcp[kMaxCpus];
+
+Page *g_page_map = nullptr; // Flat array of Page descriptors
+uint64 g_page_map_pa = 0;   // Physical base of page_map storage
+uint64 g_page_map_bytes = 0; // Byte size of page_map storage
+uint64 g_mem_base = 0;        // Physical memory base (from FDT)
+uint64 g_mem_size = 0;        // Total physical memory size
+uint64 g_num_pages = 0;       // Total managed pages
+
+} // namespace
 
 uint32 g_pcp_high_watermark = 0;
 uint32 g_pcp_batch_size = 0;
@@ -62,63 +71,68 @@ uint32 g_pcp_batch_size = 0;
 /* ------------------------------------------------------------------ */
 
 /*
- * Physical Page Number: index into the page_map array.
- * PFN = (pa - g_mem_base) / kPageSize
+ * PFN (Page Frame Number) — fundamental conversion unit.
+ * When sparse vmemmap is implemented, only these two functions change.
+ * All other PA↔Page conversions go through them.
  */
-static inline uint64 pa_to_page_index(uint64 pa) {
-  if (pa < g_mem_base || pa >= g_mem_base + g_num_pages * kPageSize)
-    kernel_panic("pa_to_page: physical address outside managed range");
-  return (pa - g_mem_base) / kPageSize;
-}
-
-static inline uint64 page_index_to_pa(uint64 idx) {
-  if (idx >= g_num_pages)
-    kernel_panic("page_to_pa: page index outside managed range");
-  return g_mem_base + idx * kPageSize;
-}
-
-PhysAddr page_to_pa(const Page *page) {
+uint64 page_to_pfn(const Page *page) {
   uintptr base = reinterpret_cast<uintptr>(g_page_map);
   uintptr addr = reinterpret_cast<uintptr>(page);
   uintptr end = base + g_num_pages * sizeof(Page);
 
-  if (addr < base || addr >= end)
-    kernel_panic("page_to_pa: page outside page_map bounds");
+  if (addr < base || addr >= end) {
+    kernel_panic("page_to_pfn: page outside page_map bounds");
+  }
 
   uint64 idx = (addr - base) / sizeof(Page);
-  return phys_addr(page_index_to_pa(idx));
+  return (g_mem_base / kPageSize) + idx;
+}
+
+Page *pfn_to_page(uint64 pfn) {
+  uint64 base_pfn = g_mem_base / kPageSize;
+  if (pfn < base_pfn || pfn >= base_pfn + g_num_pages) {
+    kernel_panic("pfn_to_page: PFN outside managed range");
+  }
+  return &g_page_map[pfn - base_pfn];
+}
+
+PhysAddr page_to_pa(const Page *page) {
+  return pfn_to_pa(Pfn{page_to_pfn(page)});
 }
 
 Page *pa_to_page(PhysAddr pa) {
-  uint64 idx = pa_to_page_index(pa.raw);
-  return &g_page_map[idx];
+  return pfn_to_page(pa_to_pfn(pa).raw);
 }
 
 VirtAddr page_to_va(const Page *page) {
   return pa_to_va(page_to_pa(page));
 }
 
+
 /* ------------------------------------------------------------------ */
 /*  Buddy system internals (caller must hold g_pmm_lock)              */
 /* ------------------------------------------------------------------ */
+
+namespace {
 
 /*
  * Find a page's buddy at a given order.
  * Buddy PFN = PFN ^ (1 << order).
  */
-static inline Page *buddy_of(Page *page, uint8 order) {
+inline Page *buddy_of(Page *page, uint8 order) {
   uint64 pfn = static_cast<uint64>(page - g_page_map);
   uint64 buddy_pfn = pfn ^ (1ULL << order);
-  if (buddy_pfn >= g_num_pages)
+  if (buddy_pfn >= g_num_pages) {
     return nullptr;
+  }
   return &g_page_map[buddy_pfn];
 }
 
 /*
  * Insert a free block into the buddy free list at the given order.
  */
-static void buddy_list_add(Page *page, uint8 order) {
-  page->state = PageState::Free;
+void buddy_list_add(Page *page, uint8 order) {
+  page->type = PageType::Free;
   page->order = order;
   list_node *head = &g_free_areas[order];
   list_node *node = &page->free.free_link;
@@ -131,7 +145,7 @@ static void buddy_list_add(Page *page, uint8 order) {
 /*
  * Remove a block from whatever buddy free list it is on.
  */
-static void buddy_list_del(Page *page) {
+void buddy_list_del(Page *page) {
   list_node *node = &page->free.free_link;
   node->prev->next = node->next;
   node->next->prev = node->prev;
@@ -144,11 +158,12 @@ static void buddy_list_del(Page *page) {
  * Splits higher-order blocks if no exact match is available.
  * Returns nullptr if no memory available.
  */
-static Page *buddy_alloc(uint8 order) {
+Page *buddy_alloc(uint8 order) {
   for (int cur = order; cur < kMaxOrder; cur++) {
     list_node *head = &g_free_areas[cur];
-    if (head->next == head)
+    if (head->next == head) {
       continue; // Empty at this order
+    }
 
     // Pop the first block from this order's free list
     list_node *node = head->next;
@@ -166,9 +181,13 @@ static Page *buddy_alloc(uint8 order) {
       buddy_list_add(split, static_cast<uint8>(cur));
     }
 
-    page->state = PageState::Allocated;
+    page->type = PageType::Allocated;
     page->order = order;
     page->refcount.store(1, __ATOMIC_RELAXED);
+    page->mapcount.store(0, __ATOMIC_RELAXED);
+    page->flags.store(0, __ATOMIC_RELAXED);
+    page->mapping = nullptr;
+    page->index = 0;
     return page;
   }
   return nullptr;
@@ -178,16 +197,18 @@ static Page *buddy_alloc(uint8 order) {
  * Return a block of 2^order pages to the buddy system.
  * Coalesces with its buddy recursively up to kMaxOrder-1.
  */
-static void buddy_free(Page *page, uint8 order) {
+void buddy_free(Page *page, uint8 order) {
   uint64 pfn = static_cast<uint64>(page - g_page_map);
 
   while (order < kMaxOrder - 1) {
     Page *buddy = buddy_of(page, order);
-    if (!buddy)
+    if (!buddy) {
       break;
+    }
     // Buddy must be free AND at the same order to coalesce
-    if (buddy->state != PageState::Free || buddy->order != order)
+    if (buddy->type != PageType::Free || buddy->order != order) {
       break;
+    }
 
     // Remove buddy from its free list and merge
     buddy_list_del(buddy);
@@ -212,14 +233,15 @@ static void buddy_free(Page *page, uint8 order) {
  * Refill the PCP from the global buddy system.
  * Acquires g_pmm_lock internally.
  */
-static void refill_pcp(PerCpuCache *pcp) {
+void refill_pcp(PerCpuCache *pcp) {
   LockGuard guard(g_pmm_lock);
   for (uint32 i = 0; i < g_pcp_batch_size; i++) {
     Page *page = buddy_alloc(0);
-    if (!page)
+    if (!page) {
       break;
+    }
     // Put onto PCP list (reuse the free_link for PCP chain)
-    page->state = PageState::PcpCached;
+    page->type = PageType::PcpCached;
     list_node *node = &page->free.free_link;
     node->next = pcp->free_list.next;
     node->prev = &pcp->free_list;
@@ -233,13 +255,14 @@ static void refill_pcp(PerCpuCache *pcp) {
  * Drain half the PCP back to the global buddy system.
  * Acquires g_pmm_lock internally.
  */
-static void drain_pcp(PerCpuCache *pcp) {
+void drain_pcp(PerCpuCache *pcp) {
   LockGuard guard(g_pmm_lock);
   int to_drain = pcp->count / 2;
   for (int i = 0; i < to_drain; i++) {
     list_node *head = &pcp->free_list;
-    if (head->next == head)
+    if (head->next == head) {
       break;
+    }
     list_node *node = head->next;
     // Unlink from PCP
     node->prev->next = node->next;
@@ -252,6 +275,8 @@ static void drain_pcp(PerCpuCache *pcp) {
     buddy_free(page, 0);
   }
 }
+
+} // namespace
 
 /* ------------------------------------------------------------------ */
 /*  Public API: single-page (fast path via PCP)                       */
@@ -269,8 +294,9 @@ Page *pmm_alloc_page() {
   uint64 cpu = arch::cpu::id();
   PerCpuCache *pcp = &g_pcp[cpu];
 
-  if (pcp->count == 0)
+  if (pcp->count == 0) {
     refill_pcp(pcp);
+  }
 
   Page *page = nullptr;
   if (pcp->count > 0) {
@@ -289,19 +315,25 @@ Page *pmm_alloc_page() {
       kernel_panic("pmm_alloc_page: PCP returned out-of-bounds page");
     }
 
-    page->state = PageState::Allocated;
+    page->type = PageType::Allocated;
     page->order = 0;
     page->refcount.store(1, __ATOMIC_RELAXED);
+    page->mapcount.store(0, __ATOMIC_RELAXED);
+    page->flags.store(0, __ATOMIC_RELAXED);
+    page->mapping = nullptr;
+    page->index = 0;
   }
 
-  if (was_on)
+  if (was_on) {
     arch::cpu::intr_on();
+  }
   return page;
 }
 
 void pmm_free_page(Page *page) {
-  if (!page)
+  if (!page) {
     kernel_panic("pmm_free_page: null page");
+  }
 
   bool was_on = arch::cpu::intr_enabled();
   arch::cpu::intr_off();
@@ -310,7 +342,7 @@ void pmm_free_page(Page *page) {
   PerCpuCache *pcp = &g_pcp[cpu];
 
   // Push onto PCP
-  page->state = PageState::PcpCached;
+  page->type = PageType::PcpCached;
   page->order = 0;
   list_node *node = &page->free.free_link;
   node->next = pcp->free_list.next;
@@ -320,11 +352,13 @@ void pmm_free_page(Page *page) {
   pcp->count++;
 
   // Drain if over high watermark
-  if (pcp->count >= g_pcp_high_watermark)
+  if (pcp->count >= g_pcp_high_watermark) {
     drain_pcp(pcp);
+  }
 
-  if (was_on)
+  if (was_on) {
     arch::cpu::intr_on();
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -332,17 +366,20 @@ void pmm_free_page(Page *page) {
 /* ------------------------------------------------------------------ */
 
 Page *pmm_alloc_pages(uint8 order) {
-  if (order >= kMaxOrder)
+  if (order >= kMaxOrder) {
     return nullptr;
+  }
   LockGuard guard(g_pmm_lock);
   return buddy_alloc(order);
 }
 
 void pmm_free_pages(Page *page, uint8 order) {
-  if (!page)
+  if (!page) {
     kernel_panic("pmm_free_pages: null page");
-  if (order >= kMaxOrder)
+  }
+  if (order >= kMaxOrder) {
     kernel_panic("pmm_free_pages: order out of range");
+  }
   LockGuard guard(g_pmm_lock);
   buddy_free(page, order);
 }
@@ -358,10 +395,11 @@ void page_decref(Page *page) {
   if (old == 1) {
     // Refcount dropped to 0 — return to pool based on originally allocated
     // order
-    if (page->order == 0)
+    if (page->order == 0) {
       pmm_free_page(page);
-    else
+    } else {
       pmm_free_pages(page, page->order);
+    }
   }
 }
 
@@ -373,11 +411,14 @@ void page_decref(Page *page) {
  * Helper: zero out a range of bytes.  We cannot use memset here
  * because lib/string may not be linked yet.
  */
-static void zero_range(void *start, uint64 bytes) {
+namespace {
+void zero_range(void *start, uint64 bytes) {
   uint8 *p = static_cast<uint8 *>(start);
-  for (uint64 i = 0; i < bytes; i++)
+  for (uint64 i = 0; i < bytes; i++) {
     p[i] = 0;
+  }
 }
+} // namespace
 
 void pmm_init() {
   /* 1. Get memory layout from memblock (already scanned FDT) */
@@ -390,9 +431,9 @@ void pmm_init() {
   }
 
   /* 2. PCP parameters */
-  uint32 calc_batch = static_cast<uint32>(g_num_pages / (kMaxCpus * 1024));
-  g_pcp_batch_size = (calc_batch > 16) ? calc_batch : 16;
-  g_pcp_high_watermark = g_pcp_batch_size * 2;
+  uint32 calc_batch = static_cast<uint32>(g_num_pages / (kMaxCpus * kPcpBatchDivisor));
+  g_pcp_batch_size = (calc_batch > kPcpMinBatchSize) ? calc_batch : kPcpMinBatchSize;
+  g_pcp_high_watermark = g_pcp_batch_size * 4;
 
   /* 3. page_map was allocated by vmm_init at vmemmap VA.
    *    No relocation needed — page_map starts life at the right VA. */
@@ -407,8 +448,13 @@ void pmm_init() {
   for (uint64 i = 0; i < g_num_pages; i++) {
     Page *page = &g_page_map[i];
     page->refcount.store(0, __ATOMIC_RELAXED);
-    page->state = PageState::Allocated;
+    page->mapcount.store(0, __ATOMIC_RELAXED);
+    page->flags.store(0, __ATOMIC_RELAXED);
+    page->type = PageType::Allocated;
     page->order = 0;
+    page->mapping = nullptr;
+    page->index = 0;
+    page->lru.init();
     page->free.free_link.init();
   }
 
@@ -438,9 +484,7 @@ void pmm_init() {
         uint64 start_pfn = (base - memblock_get_mem_base()) / kPageSize;
         uint64 end_pfn = start_pfn + size / kPageSize;
 
-        /* Access page_map via the extern g_page_map (already at vmemmap VA) */
-        extern Page *g_page_map;
-        extern list_node g_free_areas[];
+        /* Access page_map via the globals directly (they are in anon namespace now) */
 
         uint64 pfn = start_pfn;
         while (pfn < end_pfn) {
@@ -454,7 +498,7 @@ void pmm_init() {
           }
 
           Page *page = &g_page_map[pfn];
-          page->state = PageState::Free;
+          page->type = PageType::Free;
           page->order = order;
           page->refcount.store(0, __ATOMIC_RELAXED);
           page->free.free_link.init();
@@ -474,7 +518,7 @@ void pmm_init() {
       &ctx);
 
   kprintf("[pmm] buddy: %llu free pages (%llu MB)\n", ctx.total_pages,
-          (ctx.total_pages * kPageSize) / (1024 * 1024));
+          (ctx.total_pages * kPageSize) / kMB);
 
   /* 8. Retire memblock — all future allocations go through PMM */
   memblock_retire();

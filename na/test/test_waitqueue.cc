@@ -59,7 +59,7 @@ void selftest_waitqueue()
     kprintf("[test_wq] returned from yield 2\n");
     
     ST_ASSERT(g_thread_woken == true);
-    
+
     st_pass();
 
     st_begin("waitqueue: wake_all");

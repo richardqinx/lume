@@ -61,6 +61,7 @@
 #ifndef __ASSEMBLER__
 
 #include <lume/types.h>
+#include <arch/cpu.h>
 
 namespace arch {
 
@@ -86,6 +87,53 @@ struct TrapFrame {
 };
 
 static_assert(sizeof(TrapFrame) == 296, "TrapFrame size mismatch with assembly offsets");
+
+}  // namespace arch
+
+/* Forward declaration — defined in trap_md.cc.
+ * Must be after TrapFrame definition. */
+extern "C" [[noreturn]] void trap_dispatch(arch::TrapFrame*);
+
+namespace arch {
+
+/*
+ * trapframe_init_user — prepare a TrapFrame for returning to user mode.
+ *
+ * Sets arch-specific sstatus:
+ *   SPP = 0        (return to U-mode on sret)
+ *   SPIE = 1       (enable interrupts in U-mode)
+ *   FS = Initial   (allow FP instructions)
+ *
+ * Called from MI exec.cc instead of setting sstatus directly.
+ */
+static inline void trapframe_init_user(TrapFrame* tf, uint64 entry, uint64 sp)
+{
+    /* Clear all registers */
+    for (auto& t : tf->t) { t = 0; }
+    for (auto& s : tf->s) { s = 0; }
+    for (auto& a : tf->a) { a = 0; }
+    tf->ra = 0;
+    tf->gp = 0;
+    tf->tp = 0;
+
+    tf->epc = entry;
+    tf->sp  = sp;
+
+    /* sstatus: SPP=0 (U-mode), SPIE=1 (interrupts), FS=Initial (FP ok) */
+    constexpr uint64 kSPIE = (1ULL << 5);
+    constexpr uint64 kFS_Initial = (1ULL << 13);
+    tf->sstatus = kSPIE | kFS_Initial;
+
+    /* Kernel metadata used by trap_vector.S on every trap from U-mode.
+     * These are RISC-V specific — trap_vector reads them from the
+     * TrapFrame to switch to kernel context. */
+    uint64 satp;
+    asm volatile("csrr %0, satp" : "=r"(satp));
+    tf->kernel_satp   = satp;
+    tf->kernel_sp     = reinterpret_cast<uint64>(tf);
+    tf->kernel_trap   = reinterpret_cast<uint64>(&trap_dispatch);
+    tf->kernel_cpu_id = cpu::id();
+}
 
 }  // namespace arch
 

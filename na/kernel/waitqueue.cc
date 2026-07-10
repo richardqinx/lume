@@ -4,11 +4,18 @@
 /*
  * WaitQueue — blocking synchronization implementation
  *
- * sleep():    current task → Sleeping, link into queue, schedule()
- * wake_one(): dequeue head task → Runnable, sched_enqueue()
+ * Two-phase wait protocol:
+ *
+ *   prepare_to_wait():  task → Sleeping, link into queue
+ *   [caller checks condition — if still false, calls schedule()]
+ *   finish_wait():      remove from queue, restore Runnable
+ *
+ * Legacy sleep() wraps the two-phase pattern for simple callers.
+ *
+ * wake_one()/wake_all(): dequeue waiters → Runnable, sched_enqueue()
  *
  * The internal spinlock protects the wait list only.
- * schedule() is called AFTER releasing the spinlock to avoid
+ * schedule() is called AFTER releasing all spinlocks to avoid
  * holding a lock across a context switch.
  */
 
@@ -18,6 +25,53 @@
 #include <lume/kprintf.h>
 #include <arch/cpu.h>
 
+/* ------------------------------------------------------------------ */
+/*  Two-phase wait API                                                 */
+/* ------------------------------------------------------------------ */
+
+void WaitQueue::prepare_to_wait(TaskControlBlock* task, TaskState new_state)
+{
+    LockGuard guard(lock_);
+
+    /* Set state BEFORE linking — this is the key to preventing lost wakeups.
+     * If wake_one fires between now and schedule(), it will set state back
+     * to Runnable, and schedule() will see Runnable and not block. */
+    task->state = new_state;
+
+    /* Only add to queue if not already linked (idempotent) */
+    if (task->run_link.next == &task->run_link) {
+        /* Link into wait queue tail */
+        list_node* node = &task->run_link;
+        node->prev = head_.prev;
+        node->next = &head_;
+        head_.prev->next = node;
+        head_.prev = node;
+    }
+}
+
+void WaitQueue::finish_wait(TaskControlBlock* task)
+{
+    LockGuard guard(lock_);
+
+    /* Remove from wait queue if still linked */
+    if (task->run_link.next != &task->run_link) {
+        list_node* node = &task->run_link;
+        node->prev->next = node->next;
+        node->next->prev = node->prev;
+        node->init();
+    }
+
+    /* Ensure task is Runnable (it may have been woken by wake_one/wake_all
+     * already, or it may never have slept if the condition was true). */
+    if (task->state == TaskState::Sleeping) {
+        task->state = TaskState::Runnable;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Legacy convenience API                                             */
+/* ------------------------------------------------------------------ */
+
 void WaitQueue::sleep(Spinlock* external_lock)
 {
     TaskControlBlock* curr = current_task();
@@ -26,31 +80,24 @@ void WaitQueue::sleep(Spinlock* external_lock)
         return;
     }
 
-    {
-        LockGuard guard(lock_);
+    /* Phase 1: add to queue, mark Sleeping */
+    prepare_to_wait(curr, TaskState::Sleeping);
 
-        /* Mark task as sleeping */
-        curr->state = TaskState::Sleeping;
-
-        /* Remove from RunQueue (sched_dequeue acquires its own lock) */
-        /* We do NOT call sched_dequeue here because schedule() handles
-         * the put_prev_task logic when state != Running. */
-
-        /* Link into wait queue tail */
-        list_node* node = &curr->run_link;
-        node->prev = head_.prev;
-        node->next = &head_;
-        head_.prev->next = node;
-        head_.prev = node;
-    }
-
+    /* Release external lock AFTER we are on the queue (critical ordering) */
     if (external_lock) {
         external_lock->release();
     }
 
-    /* Context switch away — will return here when woken */
+    /* Phase 2: context switch away — will return here when woken */
     schedule();
+
+    /* Phase 3: clean up */
+    finish_wait(curr);
 }
+
+/* ------------------------------------------------------------------ */
+/*  Wakeup                                                             */
+/* ------------------------------------------------------------------ */
 
 bool WaitQueue::wake_one()
 {

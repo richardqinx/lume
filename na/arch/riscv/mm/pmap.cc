@@ -21,6 +21,7 @@
 #include <lume/memblock.h>
 #include <arch/mmu.h>
 #include <lume/klog.h>
+#include <lume/errno.h>
 
 namespace pmap {
 
@@ -44,6 +45,13 @@ inline constexpr uint64 PTE_COW = 1ULL << 8;
 /* SV39: 3 levels, 9 bits per level, 12-bit page offset */
 inline constexpr int kLevels = 3;
 inline constexpr int kPtePerPage = 512;
+
+/* SV39: upper half of VA space (kernel) starts at L2 index 256 */
+inline constexpr int kKernelPgdStart = kPtePerPage / 2;
+
+/* SATP PPN mask (44 bits) and page shift */
+inline constexpr uint64 kSatpPpnMask = 0xFFFFFFFFFFFULL;
+inline constexpr int kPageShift = 12;
 
 /* Extract VPN[level] from a virtual address */
 static inline uint64 vpn(uint64 va, int level)
@@ -101,13 +109,43 @@ static uint64 alloc_pt_page()
 
 uint64 create()
 {
-    return alloc_pt_page();
+    uint64 new_root = alloc_pt_page();
+    if (!new_root) return 0;
+
+    /* Copy kernel mappings from the current kernel page table.
+     * In SV39, entries 256..511 (VPN[2] >= 256) cover the upper
+     * half of the 64-bit VA space where the kernel lives.
+     * Without these, switching to the new page table would
+     * immediately fault on any kernel VA access.
+     *
+     * Only do this after the runtime page table is active —
+     * during early boot the bootstrap PT doesn't cover all of
+     * RAM so pa_to_ptr on the kernel root would fault. */
+    if (g_runtime_mapping_ready) {
+        uint64 kernel_satp;
+        asm volatile("csrr %0, satp" : "=r"(kernel_satp));
+        uint64 kernel_root_pa = (kernel_satp & kSatpPpnMask) << kPageShift;
+
+        uint64 *new_l2 = pa_to_ptr(new_root);
+        uint64 *kern_l2 = pa_to_ptr(kernel_root_pa);
+
+        for (int i = kKernelPgdStart; i < kPtePerPage; i++) {
+            new_l2[i] = kern_l2[i];
+        }
+    }
+
+    return new_root;
 }
 
 void destroy(uint64 root_pa)
 {
     uint64 *l2 = pa_to_ptr(root_pa);
-    for (int i = 0; i < kPtePerPage; i++) {
+
+    /* Only free the user half (entries 0..255).
+     * Entries 256..511 are shared kernel PGD pointers copied
+     * from the kernel page table — freeing them would corrupt
+     * the kernel's own mappings. */
+    for (int i = 0; i < kKernelPgdStart; i++) {
         if (!(l2[i] & PTE_V))
             continue;
         /* Non-leaf L2 entry? (no R/W/X bits = pointer to L1 table) */
@@ -139,7 +177,7 @@ int map(uint64 root_pa, uint64 va, uint64 pa, uint64 perm)
         if (!(table[idx] & PTE_V)) {
             uint64 child_pa = alloc_pt_page();
             if (!child_pa)
-                return -12; /* -ENOMEM */
+                return -ENOMEM; /* -ENOMEM */
             table[idx] = pa_to_pte(child_pa, PTE_V);
         }
         table = pa_to_ptr(pte_to_pa(table[idx]));
@@ -156,7 +194,7 @@ int map_2mb(uint64 root_pa, uint64 va, uint64 pa, uint64 perm)
     /* VA and PA must be 2MB-aligned */
     constexpr uint64 k2MB = 2ULL * 1024 * 1024;
     if ((va & (k2MB - 1)) != 0 || (pa & (k2MB - 1)) != 0) {
-        return -22; /* -EINVAL */
+        return -EINVAL; /* -EINVAL */
     }
 
     uint64 *table = pa_to_ptr(root_pa);
@@ -166,7 +204,7 @@ int map_2mb(uint64 root_pa, uint64 va, uint64 pa, uint64 perm)
     if (!(table[idx2] & PTE_V)) {
         uint64 child_pa = alloc_pt_page();
         if (!child_pa) {
-            return -12; /* -ENOMEM */
+            return -ENOMEM; /* -ENOMEM */
         }
         table[idx2] = pa_to_pte(child_pa, PTE_V);
     }
@@ -197,7 +235,7 @@ int protect(uint64 root_pa, uint64 va, uint64 perm)
         uint64 idx = vpn(va, level);
         uint64 pte = table[idx];
         if (!(pte & PTE_V))
-            return -14; /* -EFAULT */
+            return -EFAULT; /* -EFAULT */
         if (pte & (PTE_R | PTE_W | PTE_X)) {
             uint64 pa = pte_to_pa(pte);
             table[idx] = pa_to_pte(pa, perm | PTE_V);
@@ -205,7 +243,7 @@ int protect(uint64 root_pa, uint64 va, uint64 perm)
         }
         table = pa_to_ptr(pte_to_pa(pte));
     }
-    return -14;
+    return -EFAULT;
 }
 
 int protect_range(uint64 root_pa, uint64 start, uint64 end, uint64 perm)
@@ -250,6 +288,21 @@ bool lookup(uint64 root_pa, uint64 va, uint64 *pa_out)
     return false;
 }
 
+uint64 lookup_pte(uint64 root_pa, uint64 va)
+{
+    uint64 *table = pa_to_ptr(root_pa);
+    for (int level = 2; level >= 0; level--) {
+        uint64 idx = vpn(va, level);
+        uint64 pte = table[idx];
+        if (!(pte & PTE_V))
+            return 0;
+        if (pte & (PTE_R | PTE_W | PTE_X))
+            return pte;  // leaf PTE raw value
+        table = pa_to_ptr(pte_to_pa(pte));
+    }
+    return 0;
+}
+
 bool is_cow(uint64 root_pa, uint64 va)
 {
     uint64 *table = pa_to_ptr(root_pa);
@@ -273,7 +326,7 @@ int make_cow(uint64 root_pa, uint64 va)
         uint64 idx = vpn(va, level);
         uint64 pte = table[idx];
         if (!(pte & PTE_V))
-            return -14; /* -EFAULT */
+            return -EFAULT; /* -EFAULT */
         if (pte & (PTE_R | PTE_W | PTE_X)) {
             /* Clear write bit, set COW bit */
             pte &= ~PTE_W;
@@ -283,7 +336,7 @@ int make_cow(uint64 root_pa, uint64 va)
         }
         table = pa_to_ptr(pte_to_pa(pte));
     }
-    return -14;
+    return -EFAULT;
 }
 
 void activate(uint64 root_pa)

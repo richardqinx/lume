@@ -4,6 +4,7 @@
 #pragma once
 
 #include <lume/types.h>
+#include <lume/container_of.h>
 
 /**
  * @brief The node to be embedded in a struct to make it linkable.
@@ -290,3 +291,56 @@ public:
 private:
     list_node head_;
 };
+
+/* ========================================================================
+ * Linux-compatible C-style list macros (for VFS subsystem)
+ * ======================================================================== */
+
+using list_head = list_node;
+
+inline void list_init(list_node* head) {
+    head->prev = head;
+    head->next = head;
+}
+
+inline bool list_empty(const list_node* head) {
+    return head->next == head;
+}
+
+inline void __list_add(list_node* node, list_node* p, list_node* n) {
+    n->prev = node;
+    node->next = n;
+    node->prev = p;
+    p->next = node;
+}
+
+inline void list_add(list_node* node, list_node* head) {
+    __list_add(node, head, head->next);
+}
+
+inline void list_add_tail(list_node* node, list_node* head) {
+    __list_add(node, head->prev, head);
+}
+
+inline void list_del(list_node* node) {
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+    node->next = nullptr;
+    node->prev = nullptr;
+}
+
+inline void list_del_init(list_node* node) {
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+    list_init(node);
+}
+
+#define list_entry(ptr, type, member) container_of(ptr, type, member)
+
+#define list_for_each(pos, head) \
+    for ((pos) = (head)->next; (pos) != (head); (pos) = (pos)->next)
+
+#define list_for_each_safe(pos, tmp, head) \
+    for ((pos) = (head)->next, (tmp) = (pos)->next; \
+         (pos) != (head); \
+         (pos) = (tmp), (tmp) = (pos)->next)

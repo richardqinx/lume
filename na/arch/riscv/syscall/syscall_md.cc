@@ -11,7 +11,9 @@
  */
 
 #include <lume/syscall.h>
+#include <lume/syscall_nr.h>
 #include <arch/trapframe.h>
+#include <arch/cpu.h>
 
 void syscall_dispatch_md(arch::TrapFrame* tf)
 {
@@ -22,7 +24,19 @@ void syscall_dispatch_md(arch::TrapFrame* tf)
         tf->a[3], tf->a[4], tf->a[5],
     };
 
+    /* Enable interrupts so timer and preemption work during syscalls */
+    arch::cpu::intr_on();
+
     int64 ret = syscall_dispatch(nr, args);
 
+    arch::cpu::intr_off();
+
+    /* sys_rt_sigreturn restores the entire TrapFrame from the signal
+     * frame on the user stack.  Writing ret into a[0] would clobber
+     * the restored value, so we must skip the writeback. */
+    if (nr == static_cast<uint64>(SYS_rt_sigreturn)){
+        return;
+    }
     tf->a[0] = static_cast<uint64>(ret);  /* Return value in a0 */
 }
+

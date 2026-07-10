@@ -64,6 +64,20 @@ void pmm_free_pages(Page* page, uint8 order);
 void page_incref(Page* page);
 void page_decref(Page* page);
 
+/* --- Map counting (atomic, lock-free) --- */
+
+inline void page_inc_mapcount(Page* page) {
+    page->mapcount.fetch_add(1);
+}
+
+inline uint32 page_dec_mapcount(Page* page) {
+    return page->mapcount.fetch_sub(1) - 1;  // Returns new value
+}
+
+inline uint32 page_mapcount(const Page* page) {
+    return page->mapcount.load(__ATOMIC_RELAXED);
+}
+
 /* --- Address conversion --- */
 
 // Convert a Page* to its physical address.
@@ -74,6 +88,20 @@ Page* pa_to_page(PhysAddr pa);
 
 // Convert a Page* to a kernel virtual address.
 VirtAddr page_to_va(const Page* page);
+
+/* --- PFN (Page Frame Number) abstraction --- */
+/*
+ * PFN is the fundamental unit for PA↔Page conversion.
+ * PA↔PFN converters already exist in addr.h (pa_to_pfn / pfn_to_pa).
+ * When sparse vmemmap lands, only pfn_to_page/page_to_pfn
+ * need to change — no callers are affected.
+ */
+
+// Convert PFN to Page*. PFN = pa / PAGE_SIZE.
+Page* pfn_to_page(uint64 pfn);
+
+// Convert Page* to PFN.
+uint64 page_to_pfn(const Page* page);
 
 // Query PMM memory range (for VMM kernel mapping)
 PhysAddr pmm_get_mem_base();

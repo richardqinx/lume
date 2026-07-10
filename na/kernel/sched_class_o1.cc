@@ -44,8 +44,13 @@ int32 priority_to_timeslice(uint8 priority)
 
 static void o1_task_tick(RunQueue* rq, TaskControlBlock* curr)
 {
-    if (curr == rq->idle())
+    if (curr == rq->idle()) {
+        /* Idle task: if anything is runnable, yield immediately */
+        if (rq->nr_running() > 0) {
+            rq->set_need_resched(true);
+        }
         return;
+    }
 
     curr->time_slice--;
     if (curr->time_slice <= 0) {

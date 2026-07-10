@@ -79,7 +79,7 @@ Page* KmemCache::new_slab()
     if (!page)
         return nullptr;
 
-    page->state = PageState::Slab;
+    page->type = PageType::Slab;
     page->slab.cache = this;
     page->slab.obj_count = 0;
 
@@ -197,7 +197,7 @@ void KmemCache::free(void* obj)
     uint64 page_pa = obj_pa & ~(kPageSize - 1);
     Page* page = pa_to_page(phys_addr(page_pa));
 
-    if (page->state != PageState::Slab || page->slab.cache != this)
+    if (page->type != PageType::Slab || page->slab.cache != this)
         kernel_panic("slab free: object does not belong to this cache");
 
     bool was_on = arch::cpu::intr_enabled();
@@ -274,12 +274,12 @@ void kfree(void* ptr)
     uint64 page_pa = pa & ~(kPageSize - 1);
     Page* page = pa_to_page(phys_addr(page_pa));
 
-    if (page->state == PageState::Slab) {
+    if (page->type == PageType::Slab) {
         KmemCache* cache = page->slab.cache;
         if (!cache)
             kernel_panic("kfree: slab page has null cache");
         cache->free(ptr);
-    } else if (page->state == PageState::Allocated) {
+    } else if (page->type == PageType::Allocated) {
         /* Large allocation — return directly to PMM */
         pmm_free_pages(page, page->order);
     } else {

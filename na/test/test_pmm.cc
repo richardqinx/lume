@@ -25,7 +25,7 @@ void selftest_pmm()
     {
         Page* page = pmm_alloc_page();
         ST_ASSERT(page != nullptr);
-        ST_ASSERT(page->state == PageState::Allocated);
+        ST_ASSERT(page->type == PageType::Allocated);
         ST_ASSERT(page->order == 0);
 
         uint64 pa = page_to_pa(page).raw;
@@ -123,11 +123,11 @@ void selftest_pmm()
 
         page_decref(page);  // 2 -> 1, should NOT free
         ST_ASSERT(page->refcount.load() == 1);
-        ST_ASSERT(page->state == PageState::Allocated);
+        ST_ASSERT(page->type == PageType::Allocated);
 
         page_decref(page);  // 1 -> 0, should free to pool
         // After decref to 0, page is returned to pool.
-        // We can't safely check page->state because it might be reused.
+        // We can't safely check page->type because it might be reused.
     }
     st_pass();
     st_begin("pmm: pmm_alloc_pages natural alignment (order-3)");

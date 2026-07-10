@@ -22,7 +22,8 @@
 #include <lume/new.h>
 #include <lume/klog.h>
 #include <arch/pmap.h>
-#include <arch/mmu.h>
+#include <lume/tlb.h>
+#include <lume/mm_layout.h>
 
 /* ------------------------------------------------------------------ */
 /*  Rbtree callbacks for VMA interval tree                            */
@@ -65,8 +66,7 @@ static bool range_overlaps(uint64 a_start, uint64 a_end,
     return a_start < b_end && b_start < a_end;
 }
 
-static constexpr uint64 kUserVaBase = kPageSize;  // Avoid mapping the null page
-static constexpr uint64 kUserVaLimit = 0xFFFFFFC000000000ULL;
+
 
 static bool vma_overlaps_locked(VmSpace* space, uint64 start, uint64 end)
 {
@@ -188,9 +188,20 @@ VmSpace* VmSpace::create() {
 
     space->vma_tree = RB_ROOT;
     space->lock.init("VmSpace");
+    space->refcount.store(1, __ATOMIC_RELAXED);
     space->brk_start = 0;
     space->brk_end = 0;
     return space;
+}
+
+void VmSpace::incref() {
+    refcount.fetch_add(1, __ATOMIC_RELAXED);
+}
+
+void VmSpace::put() {
+    if (refcount.fetch_sub(1, __ATOMIC_ACQ_REL) == 1) {
+        destroy();
+    }
 }
 
 void VmSpace::destroy() {
@@ -202,11 +213,13 @@ void VmSpace::destroy() {
         VmAreaStruct* vma = reinterpret_cast<VmAreaStruct*>(
             reinterpret_cast<char*>(node) - __builtin_offsetof(VmAreaStruct, rb));
         
-        /* Decref all mapped physical pages */
+        /* Decref and dec mapcount for all mapped physical pages */
         for (uint64 addr = vma->start; addr < vma->end; addr += kPageSize) {
             uint64 pa;
             if (pmap::lookup(root, addr, &pa)) {
-                page_decref(pa_to_page(phys_addr(pa)));
+                Page* pg = pa_to_page(phys_addr(pa));
+                page_dec_mapcount(pg);
+                page_decref(pg);
             }
         }
 
@@ -285,8 +298,10 @@ int vmm_unmap_user(VmSpace* space, uint64 va, uint64 len) {
             for (uint64 addr = unmap_start; addr < unmap_end; addr += kPageSize) {
                 uint64 pa;
                 if (pmap::lookup(space->root_pa, addr, &pa)) {
-                    page_decref(pa_to_page(phys_addr(pa)));
                     pmap::unmap(space->root_pa, addr);
+                    Page* pg = pa_to_page(phys_addr(pa));
+                    page_dec_mapcount(pg);
+                    page_decref(pg);
                 }
             }
         }
@@ -362,7 +377,9 @@ int vmm_protect_user(VmSpace* space, uint64 va, uint64 len, uint64 perm)
             }
 
             if (perm == 0) {
-                page_decref(pa_to_page(phys_addr(pa)));
+                Page* pg = pa_to_page(phys_addr(pa));
+                page_dec_mapcount(pg);
+                page_decref(pg);
                 pmap::unmap(space->root_pa, addr);
                 tlb_flush_needed = true;
                 continue;
@@ -385,7 +402,7 @@ int vmm_protect_user(VmSpace* space, uint64 va, uint64 len, uint64 perm)
     }
 
     if (tlb_flush_needed) {
-        arch::mmu::flush_tlb_all();
+        tlb_shootdown_range(space, va, end);
     }
     return 0;
 }
@@ -399,7 +416,11 @@ uint64 mm_find_free_va(VmSpace* space, uint64 length, uint64 align)
 
     LockGuard guard(space->lock);
 
-    uint64 cursor = align_up_any(kUserVaBase, align);
+    /* Linux: arch_get_unmapped_area() starts from mm->mmap_base.
+     * RISC-V: TASK_UNMAPPED_BASE = PAGE_ALIGN(TASK_SIZE / 3).
+     * Fall back to kUserVaBase if mmap_base not set (kernel VmSpaces). */
+    uint64 base = space->mmap_base ? space->mmap_base : kUserVaBase;
+    uint64 cursor = align_up_any(base, align);
     struct rb_node* node = rb_first(&space->vma_tree);
     while (node) {
         VmAreaStruct* vma = node_to_vma(node);
@@ -494,21 +515,43 @@ int vmm_handle_page_fault(VmSpace* space, uint64 fault_addr, VmFaultCause cause)
                 return -ENOMEM;
             }
 
-            /* Decrement refcount of old page */
-            page_decref(pa_to_page(phys_addr(paddr)));
+            /* New page gets mapcount = 1 (we just mapped it) */
+            page_inc_mapcount(page);
+
+            /* Decrement mapcount and refcount of old page */
+            Page* old_page = pa_to_page(phys_addr(paddr));
+            page_dec_mapcount(old_page);
+            page_decref(old_page);
             
             /* Flush TLB to remove old read-only cached translation */
-            asm volatile("sfence.vma %0" : : "r"(aligned_addr) : "memory");
+            tlb_shootdown_page(space, aligned_addr);
             return 0;
+        }
+        /* DEBUG: page already mapped but still faulting — dump PTE */
+        {
+            uint64 cur_satp;
+            asm volatile("csrr %0, satp" : "=r"(cur_satp));
+            printk(KERN_ERR "fault: va=%llx pa=%llx cause=%d pte=%llx satp=%llx root=%llx\n",
+                    aligned_addr, paddr, static_cast<int>(cause),
+                    pmap::lookup_pte(space->root_pa, aligned_addr),
+                    cur_satp, space->root_pa);
         }
         return 0;  // Already mapped, maybe read fault on existing page
     }
 
-    /* Allocate physical page */
+    /* Allocate physical page and zero it.
+     * Linux: do_anonymous_page() uses alloc_zeroed_user_highpage_movable().
+     * Anonymous pages MUST be zeroed — userspace expects MAP_ANONYMOUS
+     * pages to contain all zeros (POSIX requirement). */
     Page* page = pmm_alloc_page();
     if (!page) return -ENOMEM;
 
     uint64 pa = page_to_pa(page).raw;
+
+    /* Zero the page before mapping it to userspace */
+    /* Zero the page before mapping it to userspace */
+    uint8* kva = reinterpret_cast<uint8*>(pa_to_va(PhysAddr{pa}).raw);
+    for (uint64 i = 0; i < kPageSize; i++) kva[i] = 0;
 
     /* Translate MI permission flags to hardware PTE bits (MD layer) */
     uint64 pte_perm = pmap::vm_perm_to_pte(vma->perm);
@@ -518,7 +561,9 @@ int vmm_handle_page_fault(VmSpace* space, uint64 fault_addr, VmFaultCause cause)
         return -ENOMEM;
     }
 
-    /* Initial mapping, refcount is already 1 from pmm_alloc_page */
+    /* Initial mapping: refcount is already 1 from pmm_alloc_page.
+     * Set mapcount = 1 to track this PTE mapping. */
+    page_inc_mapcount(page);
 
     return 0;
 }
@@ -561,7 +606,7 @@ VmSpace* vmm_clone(VmSpace* parent) {
                 if (child_vma->perm & VM_WRITE) {
                     pmap::make_cow(parent->root_pa, va);
                     /* Flush TLB for parent since we reduced permissions */
-                    asm volatile("sfence.vma %0" : : "r"(va) : "memory");
+                    tlb_shootdown_page(parent, va);
                 }
                 
                 /* Map in child as COW or read-only */
@@ -580,8 +625,10 @@ VmSpace* vmm_clone(VmSpace* parent) {
                     return nullptr;
                 }
                 
-                /* Increment physical page refcount */
-                page_incref(pa_to_page(phys_addr(pa)));
+                /* Increment physical page refcount and mapcount */
+                Page* shared_page = pa_to_page(phys_addr(pa));
+                page_incref(shared_page);
+                page_inc_mapcount(shared_page);
             }
         }
         

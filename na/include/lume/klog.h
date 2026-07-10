@@ -51,7 +51,11 @@ enum KlogSubsys : uint8 {
     KLOG_SUBSYS_FS      = 8,
     KLOG_SUBSYS_DRIVER  = 9,
     KLOG_SUBSYS_TEST    = 10,
-    KLOG_SUBSYS_MAX     = 11,
+    KLOG_SUBSYS_SYSCALL = 11,   /* per-syscall entry trace */
+    KLOG_SUBSYS_EXEC    = 12,   /* ELF load / exec internals */
+    KLOG_SUBSYS_SIGNAL  = 13,   /* signal delivery trace */
+    KLOG_SUBSYS_TTY     = 14,   /* tty / job-control trace */
+    KLOG_SUBSYS_MAX     = 15,
 };
 
 /* Default: show everything up to INFO. DEBUG is compile-gated. */
@@ -164,6 +168,15 @@ void klog_stats(KlogStats* out);
 #else
 #define pr_debug(fmt, ...)  do {} while (0)
 #endif
+
+/* pr_debug_s: subsystem-tagged debug. Always compiled in (subsys is the gate);
+ * level KLOG_DEBUG ensures messages stay in the ring buffer but are filtered
+ * out of the console by default (console_level = KLOG_INFO). Toggle a subsys
+ * with klog_enable_subsys()/klog_disable_subsys() at runtime — or, to make
+ * the messages also reach the console for debugging, raise console_level
+ * via klog_set_level(KLOG_DEBUG). */
+#define pr_debug_s(subsys, fmt, ...) \
+    klog_ex(KLOG_DEBUG, subsys, fmt, ##__VA_ARGS__)
 
 /* Linux kernel loglevel prefixes */
 #define KERN_SOH    "\001"

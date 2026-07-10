@@ -14,6 +14,8 @@
 void selftest_pmm();
 void selftest_slab();
 void selftest_spinlock();
+void selftest_mutex();
+void selftest_driver_model();
 void selftest_rbtree();
 void selftest_vmm();
 void selftest_fdt();
@@ -23,10 +25,21 @@ void selftest_trap();
 void selftest_sched();
 void selftest_klog();
 void selftest_random();
-void selftest_reloc();
 void selftest_waitqueue();
 void selftest_uaccess();
 void selftest_sys_mm();
+void selftest_dcache();
+void selftest_namei();
+void selftest_vfs_io();
+void selftest_exec();
+void selftest_devfs();
+void selftest_pipe();
+void selftest_fcntl();
+void selftest_sys_process();
+void selftest_signal();
+void selftest_pid();
+void selftest_sys_fs_extra();
+void selftest_page_cache();
 
 void selftest_run_all()
 {
@@ -35,6 +48,8 @@ void selftest_run_all()
     kprintf("========================================\n");
 
     selftest_spinlock();
+    selftest_mutex();
+    selftest_driver_model();
     selftest_pmm();
     selftest_slab();
     selftest_rbtree();
@@ -46,10 +61,21 @@ void selftest_run_all()
     selftest_sched();
     selftest_klog();
     selftest_random();
-    selftest_reloc();
     selftest_waitqueue();
     selftest_uaccess();
     selftest_sys_mm();
+    selftest_dcache();
+    selftest_namei();
+    selftest_vfs_io();
+    selftest_devfs();
+    selftest_pipe();
+    selftest_fcntl();
+    selftest_sys_process();
+    selftest_signal();
+    selftest_pid();
+    selftest_sys_fs_extra();
+    selftest_page_cache();
+    selftest_exec();
 
     kprintf("========================================\n");
     kprintf("  All self-tests PASSED\n");

@@ -203,7 +203,7 @@ void selftest_slab()
         uint64 page_pa = va_to_pa(virt_addr(reinterpret_cast<uint64>(base_ptr))).raw;
         Page* page = pa_to_page(phys_addr(page_pa));
         
-        ST_ASSERT(page->state == PageState::Slab);
+        ST_ASSERT(page->type == PageType::Slab);
         ST_ASSERT(page->slab.obj_count == 32);
 
         // Free all items in this isolated slab page
@@ -212,7 +212,7 @@ void selftest_slab()
         }
         
         // The page MUST have been returned to the PMM (either global Free or Per-CPU Cached).
-        ST_ASSERT(page->state == PageState::Free || page->state == PageState::PcpCached);
+        ST_ASSERT(page->type == PageType::Free || page->type == PageType::PcpCached);
         
         // Clean up the drain array
         for (int i = 0; i < drain_count; i++) {

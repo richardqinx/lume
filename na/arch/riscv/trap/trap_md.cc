@@ -120,15 +120,44 @@ static TrapInfo build_trap_info(arch::TrapFrame* tf,
  *
  * Reads RISC-V CSRs, translates to MI TrapCause, applies arch-specific
  * fixups, then calls MI trap_handle().
+ *
+ * After trap_handle returns, we must return to user mode via userret().
+ * The assembly jalr t3 that called us has NO return-to-user code after it,
+ * so trap_dispatch must never return normally.
  * ======================================================================== */
 
-extern "C" void trap_dispatch(arch::TrapFrame* tf)
+extern "C" void userret(arch::TrapFrame* tf);
+
+extern "C" [[noreturn]] void trap_dispatch(arch::TrapFrame* tf)
 {
+    /* Switch stvec to kernelvec immediately so that any traps during
+     * kernel execution (timer IRQs, page faults from copy_from_user)
+     * go through the kernel trap entry, not the user trap entry.
+     * This matches Linux which sets stvec to handle_exception (kernel)
+     * at the top of the user trap path. */
+    extern void kernelvec();
+    arch::trap::set_vector(reinterpret_cast<uint64>(&kernelvec));
+
+    /* Enable SUM so S-mode can access user pages (PTE_U).
+     * Without this, any dereference of user-space pointers in syscall
+     * handlers (sys_write buf, sys_read buf, etc.) would page fault. */
+    arch::trap::enable_sum();
+
     uint64 scause = arch::trap::get_cause();
     uint64 stval  = arch::trap::get_value();
 
     TrapOrigin origin = origin_from_sstatus(tf->sstatus);
     TrapInfo info = build_trap_info(tf, scause, stval, origin);
+
+    /* Per-trap trace from user mode. Stored at KLOG_DEBUG / KLOG_SUBSYS_TRAP
+     * so it lives in the ring buffer for postmortem but stays off the console
+     * by default. No more in-band 20-trap window — flip console_level or
+     * dump the ring on demand instead. */
+    if (origin == TrapOrigin::FromUser) {
+        pr_debug_s(KLOG_SUBSYS_TRAP,
+                   "trap: cause=%u epc=%llx val=%llx\n",
+                   static_cast<unsigned>(info.cause), info.epc, info.val);
+    }
 
     /* Save trapframe in TCB for syscall handlers (like fork) */
     TaskControlBlock* curr = current_task();
@@ -152,6 +181,13 @@ extern "C" void trap_dispatch(arch::TrapFrame* tf)
 
     /* Call MI-layer dispatcher (zero inline assembly from here on) */
     trap_handle(tf, info);
+
+    /* Return to user mode.
+     * Set stvec back to trap_vector for the next user-mode trap,
+     * then jump to userret which restores registers and does sret. */
+    arch::trap::set_vector(reinterpret_cast<uint64>(&trap_vector));
+    userret(tf);
+    __builtin_unreachable();
 }
 
 /* ========================================================================

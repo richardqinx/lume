@@ -35,6 +35,7 @@ void unmap(uint64 root_pa, uint64 va);
 int protect(uint64 root_pa, uint64 va, uint64 perm);
 int protect_range(uint64 root_pa, uint64 start, uint64 end, uint64 perm);
 bool lookup(uint64 root_pa, uint64 va, uint64* pa_out);
+uint64 lookup_pte(uint64 root_pa, uint64 va);
 bool is_cow(uint64 root_pa, uint64 va);
 int make_cow(uint64 root_pa, uint64 va);
 void activate(uint64 root_pa);

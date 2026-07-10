@@ -15,6 +15,7 @@
 #include <lume/errno.h>
 #include <lume/mman.h>
 #include <lume/config.h>
+#include <lume/klog.h>
 
 
 /* Page alignment helpers */
@@ -78,6 +79,9 @@ int64 sys_brk(uint64 new_brk, uint64, uint64, uint64, uint64, uint64)
 int64 sys_mmap(uint64 addr, uint64 length, uint64 prot,
                uint64 flags, uint64 fd, uint64 offset)
 {
+    printk("[mmap] addr=%llx len=%llx prot=%llx flags=%llx fd=%lld off=%llx\n",
+           addr, length, prot, flags, static_cast<int64>(fd), offset);
+
     if (length == 0) return -EINVAL;
     length = page_align_up(length);
     if (offset % kPageSize != 0) return -EINVAL;
@@ -89,8 +93,10 @@ int64 sys_mmap(uint64 addr, uint64 length, uint64 prot,
     if (!mm) return -ENOMEM;
 
     /* Phase 2: only anonymous private mappings */
-    if (!(flags & MAP_ANONYMOUS))
+    if (!(flags & MAP_ANONYMOUS)) {
+        printk("[mmap] REJECTED: file-backed mmap not implemented\n");
         return -ENOSYS; /* File-backed mmap is Phase 3 */
+    }
     if (flags & MAP_SHARED)
         return -ENOSYS; /* Shared mappings are Phase 3 */
 

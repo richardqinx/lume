@@ -47,11 +47,28 @@ inline constexpr int SYS_writev         = 66;
 inline constexpr int SYS_ppoll          = 73;
 inline constexpr int SYS_fstatat        = 79;
 inline constexpr int SYS_fstat          = 80;
+inline constexpr int SYS_getdents64     = 61;
+
+inline constexpr int SYS_fcntl          = 25;
+inline constexpr int SYS_linkat         = 37;
+inline constexpr int SYS_mount          = 40;
+inline constexpr int SYS_umount2        = 39;
 
 inline constexpr int SYS_kill           = 129;
+inline constexpr int SYS_tkill          = 130;
+inline constexpr int SYS_tgkill         = 131;
+inline constexpr int SYS_sigaltstack    = 132;
 inline constexpr int SYS_rt_sigaction   = 134;
 inline constexpr int SYS_rt_sigprocmask = 135;
 inline constexpr int SYS_rt_sigreturn   = 139;
+inline constexpr int SYS_reboot         = 142;
+inline constexpr int SYS_setpgid        = 154;
+inline constexpr int SYS_getpgid        = 155;
+inline constexpr int SYS_getsid         = 156;
+inline constexpr int SYS_setsid         = 157;
+inline constexpr int SYS_prctl          = 167;
+inline constexpr int SYS_geteuid        = 175;
+inline constexpr int SYS_getegid        = 177;
 
 inline constexpr int SYS_futex          = 98;
 inline constexpr int SYS_nanosleep      = 101;
@@ -59,3 +76,7 @@ inline constexpr int SYS_clock_gettime  = 113;
 inline constexpr int SYS_epoll_create1  = 20;
 inline constexpr int SYS_epoll_ctl      = 21;
 inline constexpr int SYS_epoll_pwait    = 22;
+
+inline constexpr int SYS_rt_sigtimedwait = 137;
+inline constexpr int SYS_socket          = 198;
+inline constexpr int SYS_sendto          = 206;

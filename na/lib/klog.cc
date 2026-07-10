@@ -166,9 +166,7 @@ static void ring_drop_oldest(uint32 needed)
 
 static void console_emit(const char* s, int len)
 {
-    for (int i = 0; i < len; ++i) {
-        early_putc(s[i]);
-    }
+    console_write_all(s, len);
 }
 
 static int klog_format_line(char* out, int out_size,
@@ -329,12 +327,20 @@ static void klog_vex(KlogLevel level, KlogSubsys subsys,
         ring_write_bytes(msg, hdr.len);
         if (do_console) {
             g_klog.console_tail = g_klog.head;
+            /* Emit to UART while holding the lock to prevent
+             * interleaved output from concurrent CPUs. */
+            char line[KLOG_LINE_MAX + 64];
+            int line_len = klog_format_line(line, sizeof(line),
+                                            hdr, msg, hdr.len);
+            if (line_len > 0) {
+                console_emit(line, line_len);
+            }
         }
-    }
-
-    if (do_console) {
+    } else if (do_console) {
+        /* Pre-init or panic mode: emit without lock */
         char line[KLOG_LINE_MAX + 64];
-        int line_len = klog_format_line(line, sizeof(line), hdr, msg, hdr.len);
+        int line_len = klog_format_line(line, sizeof(line),
+                                        hdr, msg, hdr.len);
         if (line_len > 0) {
             console_emit(line, line_len);
         }

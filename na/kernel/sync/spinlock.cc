@@ -17,6 +17,7 @@
 #include "cpu_state.h"
 #include <arch/cpu.h>
 #include <lume/klog.h>
+#include <lume/task.h>
 
 // ============================================================
 // Per-CPU sync state (BSS zero-initialized)
@@ -88,6 +89,10 @@ void Spinlock::acquire() {
 
     // Step 4: record owner
     cpu_id_ = arch::cpu::id();
+
+    // Step 5: bump preempt_count — prevents schedule() from preempting
+    TaskControlBlock* curr = current_task();
+    if (curr) curr->preempt_count++;
 }
 
 void Spinlock::release() {
@@ -102,7 +107,11 @@ void Spinlock::release() {
     // Step 3: release the lock with release semantics
     locked_.store(0, __ATOMIC_RELEASE);
 
-    // Step 4: restore interrupt state if this was the last lock
+    // Step 4: drop preempt_count
+    TaskControlBlock* curr = current_task();
+    if (curr) curr->preempt_count--;
+
+    // Step 5: restore interrupt state if this was the last lock
     sync::pop_intr();
 }
 

@@ -11,6 +11,7 @@
 #include <lume/kref.h>
 #include <lume/kobject.h>
 #include <lume/device.h>
+#include <lume/irq.h>
 
 /* ------------------------------------------------------------------ */
 /*  Test 1: kref get/put + release fires exactly once                  */
@@ -206,4 +207,8 @@ void selftest_driver_model()
     test_kref();
     test_kobject_hierarchy();
     test_bus_bind();
+
+    st_begin("driver model: platform IRQ chip probed");
+    ST_ASSERT(g_irq_manager.get_chip() != nullptr);
+    st_pass();
 }

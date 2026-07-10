@@ -51,14 +51,31 @@ static int platform_match(device* dev, device_driver* drv)
     if (pdrv->of_match_table == nullptr || pdev->of_node == nullptr) {
         return 0;
     }
-    const char* node_compat = pdev->of_node->get_prop_string("compatible");
-    if (node_compat == nullptr) {
+    const FdtProperty* compat_prop = pdev->of_node->get_prop("compatible");
+    if (compat_prop == nullptr || compat_prop->value == nullptr ||
+        compat_prop->len == 0) {
         return 0;
     }
+
+    const char* compat_list = static_cast<const char*>(compat_prop->value);
+    const uint32 compat_len = static_cast<uint32>(compat_prop->len);
     for (const of_device_id* id = pdrv->of_match_table;
          id->compatible != nullptr; ++id) {
-        if (strcmp(id->compatible, node_compat) == 0) {
-            return 1;
+        uint32 offset = 0;
+        while (offset < compat_len) {
+            const char* node_compat = compat_list + offset;
+            uint32 remaining = compat_len - offset;
+            uint32 length = 0;
+            while (length < remaining && node_compat[length] != '\0') {
+                ++length;
+            }
+            if (length == remaining) {
+                break;  /* malformed property without a terminating NUL */
+            }
+            if (strcmp(id->compatible, node_compat) == 0) {
+                return 1;
+            }
+            offset += length + 1;
         }
     }
     return 0;

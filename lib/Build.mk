@@ -1,4 +1,18 @@
-targets += lib/runtime lib/string lib/libfdt lib/core
+targets += lib/ktl/headers lib/libc/headers lib/ktl lib/runtime lib/string \
+           lib/libfdt lib/core
+
+target.lib/ktl/headers.kind := header-library
+target.lib/ktl/headers.public-includes := lib/ktl/include
+target.lib/ktl/headers.public-after-includes := lib/ktl/include-after
+
+target.lib/libc/headers.kind := header-library
+target.lib/libc/headers.public-includes := lib/libc/include
+target.lib/libc/headers.public-after-includes := lib/libc/include-after
+target.lib/libc/headers.deps := lib/ktl/headers
+
+target.lib/ktl.kind := source-set
+target.lib/ktl.sources := lib/ktl/popcount.cc lib/ktl/stub-new.cc
+target.lib/ktl.deps := lib/ktl/headers lib/libc/headers
 
 target.lib/runtime.kind := source-set
 target.lib/runtime.sources := \
@@ -32,4 +46,4 @@ target.lib/libfdt.private-includes := scripts/dtc/libfdt
 target.lib/libfdt.cflags := -Wno-parentheses -Wno-sign-compare
 
 target.lib/core.kind := header-library
-target.lib/core.deps := lib/runtime lib/string lib/libfdt
+target.lib/core.deps := lib/ktl lib/libc/headers lib/runtime lib/string lib/libfdt

@@ -131,7 +131,10 @@ if_changed = @scripts/build/run-if-changed.sh \
    quiet_cmd_toolchain_probe = PROBE   toolchain
          cmd_toolchain_probe = scripts/build/probe-toolchain.sh $@ \
              $(CC) $(CXX) $(LD) $(COMPILER_FAMILY) $(TARGET_TRIPLE) \
-             '$(GCC_TOOLCHAIN)' '$(GCC_SYSROOT)'
+             '$(GCC_TOOLCHAIN)' '$(GCC_SYSROOT)' \
+             '$(KTL_INCLUDE)' '$(KTL_AFTER_INCLUDE)' \
+             '$(KERNEL_LIBC_INCLUDE)' '$(KERNEL_LIBC_AFTER_INCLUDE)' \
+             '$(LIBCXX_INCLUDE)' '$(COMPILER_RESOURCE_INCLUDE)'
 
    quiet_cmd_phys_cc_o_c = PHYSCC  $(PRIVATE_SOURCE)
          cmd_phys_cc_o_c = $(CC) $(PHYS_CFLAGS) -MMD -MP -c $(PRIVATE_SOURCE) -o $@

@@ -14,7 +14,7 @@ CFLAGS := $(WARNINGS) $(KERNEL_OPT_FLAGS) \
           $(TOOLCHAIN_CFLAGS) $(KCPPFLAGS) $(INCLUDES) \
           -I$(BUILD)/generated
 
-CFLAGS_LIBC := $(CFLAGS) -std=gnu23 -Iinclude/libc-shim \
+CFLAGS_LIBC := -Iinclude/libc-shim $(CFLAGS) -std=gnu23 \
                -Wno-parentheses -Wno-sign-compare
 
 CXXFLAGS := $(CFLAGS) $(TOOLCHAIN_CXXFLAGS) -std=c++23 \

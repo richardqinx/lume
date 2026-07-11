@@ -1,0 +1,10 @@
+Zircon kernel libc header layer
+
+Source: zircon/kernel/lib/libc/include and include-after
+Fuchsia revision: f8d670ab4bbb71bfb4d569893ba12fbb8a83bacd
+
+This first import contains the complete public header layer.  The libc
+implementation sources are intentionally not imported yet because abort,
+panic, heap, console output, and C++ ABI providers belong to later foundation
+batches.  Existing LumeOS C implementations continue to provide the symbols
+used by the current kernel.

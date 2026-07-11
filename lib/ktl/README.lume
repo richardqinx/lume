@@ -1,0 +1,8 @@
+KTL configuration overlay imported from Zircon
+
+Source: zircon/kernel/lib/ktl
+Fuchsia revision: f8d670ab4bbb71bfb4d569893ba12fbb8a83bacd
+
+The complete KTL header overlay and its two implementation files, popcount.cc
+and stub-new.cc, are imported.  The KTL target is built together with the
+Zircon kernel libc header layer and the version-matched libc++ snapshot.

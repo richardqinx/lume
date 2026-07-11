@@ -475,11 +475,15 @@ info:
 	@echo "  TARGET            $(TARGET_TRIPLE)"
 	@echo "  GCC_TOOLCHAIN     $(GCC_TOOLCHAIN)"
 	@echo "  SYSROOT           $(GCC_SYSROOT)"
+	@echo "  RESOURCE HEADERS  $(COMPILER_RESOURCE_INCLUDE)"
 	@echo "  LINKER            $(LINKER_FAMILY): $(LD)"
 	@echo "  OBJCOPY           $(OBJCOPY)"
 	@echo "  INITRAMFS         $(INITRAMFS_SOURCE)"
 	@echo "  C++ STANDARD      C++23"
 	@echo "  C++ LIBRARY       $(CXX_STDLIB)"
+	@echo "  libc++ HEADERS    $(LIBCXX_INCLUDE)"
+	@echo "  KTL CONFIG        $(KTL_INCLUDE)"
+	@echo "  KERNEL LIBC       $(KERNEL_LIBC_INCLUDE)"
 	@echo "  C++ ABI           $(CXX_ABI)"
 	@echo "  COMPILER RUNTIME  $(COMPILER_RUNTIME)"
 	@echo "  CONFIG            $(KCONFIG_CONFIG)"
@@ -549,7 +553,19 @@ check-toolchain:
 	@command -v $(firstword $(LD)) >/dev/null || { echo "missing linker: $(LD)"; exit 1; }
 	@command -v $(firstword $(OBJCOPY)) >/dev/null || { echo "missing objcopy: $(OBJCOPY)"; exit 1; }
 	@$(CXX) $(TOOLCHAIN_CFLAGS) $(TOOLCHAIN_CXXFLAGS) -std=c++23 \
-		-ffreestanding -fno-exceptions -fno-rtti -fsyntax-only -x c++ /dev/null
+		-ffreestanding -fno-exceptions -fno-rtti \
+		-Iinclude -I$(KTL_INCLUDE) -I$(KERNEL_LIBC_INCLUDE) \
+		-idirafter $(KTL_AFTER_INCLUDE) -idirafter $(KERNEL_LIBC_AFTER_INCLUDE) \
+		-fsyntax-only scripts/build/probes/libcxx.cc
+	@$(CXX) $(TOOLCHAIN_CFLAGS) $(TOOLCHAIN_CXXFLAGS) -std=c++23 \
+		-ffreestanding -fno-exceptions -fno-rtti \
+		-Iinclude -I$(KTL_INCLUDE) -I$(KERNEL_LIBC_INCLUDE) \
+		-idirafter $(KTL_AFTER_INCLUDE) -idirafter $(KERNEL_LIBC_AFTER_INCLUDE) \
+		-fsyntax-only scripts/build/probes/libc_headers.cc
+	@$(CC) $(TOOLCHAIN_CFLAGS) -std=gnu23 -ffreestanding \
+		-Iinclude -I$(KERNEL_LIBC_INCLUDE) \
+		-idirafter $(KERNEL_LIBC_AFTER_INCLUDE) \
+		-fsyntax-only scripts/build/probes/libc_headers.c
 	@echo "Toolchain OK: $$($(CXX) --version | head -n 1)"
 
 TOOLCHAIN_REPORT := $(BUILD)/toolchain.report
